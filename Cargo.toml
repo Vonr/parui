@@ -1,0 +1,15 @@
+[package]
+name = "parui"
+description = "Simple TUI frontend for paru."
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/Vonr/parui"
+repository = "https://github.com/Vonr/parui"
+keywords = ["tui", "terminal", "frontend", "paru"]
+
+[dependencies]
+crossterm = "0.23.2"
+tui = { version = "0.18", features = ["crossterm"] }
+
