@@ -1,6 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io;
-use std::iter::{Enumerate, Skip};
+use std::rc::Rc;
 use std::{borrow::Cow, os::unix::prelude::CommandExt};
 
 use crossterm::event::{
@@ -31,13 +32,12 @@ fn main() -> Result<(), io::Error> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    // let mut asi = termion::async_stdin();
 
     let mut query: Cow<String> = Cow::Owned(String::new());
-    let mut results: Vec<String> = Vec::new();
+    let results: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let mut mode = Mode::Insert;
     let mut selected = 0;
-    let mut info: Vec<Spans> = Vec::new();
+    let mut info: Rc<RefCell<Vec<Spans>>> = Rc::new(RefCell::new(Vec::new()));
 
     let mut installed_cache: HashMap<usize, bool> = HashMap::new();
 
@@ -76,7 +76,7 @@ fn main() -> Result<(), io::Error> {
             let para = Paragraph::new(format_results(
                 results.clone(),
                 size.height as usize,
-                results.len().to_string().len(),
+                results.borrow().len().to_string().len(),
                 skipped as usize,
                 &mut installed_cache,
             ))
@@ -88,14 +88,14 @@ fn main() -> Result<(), io::Error> {
             .alignment(Alignment::Left);
             s.render_widget(para, chunks[1]);
 
-            if !info.is_empty() {
+            if !info.borrow().is_empty() {
                 let area = Rect {
                     x: size.width / 2,
                     y: 4,
                     width: size.width / 2,
                     height: size.height - 5,
                 };
-                let info = Paragraph::new(info.clone())
+                let info = Paragraph::new(info.borrow().clone())
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
@@ -167,11 +167,11 @@ fn main() -> Result<(), io::Error> {
                         _ => query.to_mut().push(c),
                     },
                     KeyCode::Enter => {
-                        results.clear();
+                        (*results).borrow_mut().clear();
                         let packages = search(&query);
 
                         for line in packages.lines().map(|line| line.to_string()) {
-                            results.push(line);
+                            (*results).borrow_mut().push(line);
                         }
                         mode = Mode::Select;
                     }
@@ -182,22 +182,22 @@ fn main() -> Result<(), io::Error> {
                         if let Mode::Select = mode {
                             if selected > 0 {
                                 selected -= 1;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             } else {
-                                selected = results.len() as u16 - 1;
-                                info.clear();
+                                selected = results.borrow().len() as u16 - 1;
+                                (*info).borrow_mut().clear();
                             }
                         }
                     }
                     KeyCode::Down => {
                         if let Mode::Select = mode {
-                            let result_count = results.len();
+                            let result_count = results.borrow().len();
                             if result_count > 1 && selected < result_count as u16 - 1 {
                                 selected += 1;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             } else {
                                 selected = 0;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             }
                         }
                     }
@@ -205,53 +205,53 @@ fn main() -> Result<(), io::Error> {
                         let size = terminal.size().unwrap();
                         let per_page = size.height - 5;
 
-                        if selected >= per_page && results.len() > per_page as usize {
+                        if selected >= per_page && results.borrow().len() > per_page as usize {
                             selected -= per_page;
-                            info.clear();
+                            (*info).borrow_mut().clear();
                         }
                     }
                     KeyCode::Right => {
                         let size = terminal.size().unwrap();
                         let per_page = size.height - 5;
 
-                        if selected < results.len() as u16 - per_page
-                            && results.len() > per_page as usize
+                        if selected < results.borrow().len() as u16 - per_page
+                            && results.borrow().len() > per_page as usize
                         {
                             selected += per_page;
-                            info.clear();
+                            (*info).borrow_mut().clear();
                         }
                     }
                     KeyCode::Char(c) => match c {
                         'j' => {
-                            if selected < results.len() as u16 - 1 {
+                            if selected < results.borrow().len() as u16 - 1 {
                                 selected += 1;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             }
                         }
                         'k' => {
                             if selected > 0 {
                                 selected -= 1;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             }
                         }
                         'h' => {
                             let size = terminal.size().unwrap();
                             let per_page = size.height - 5;
 
-                            if selected >= per_page && results.len() > per_page as usize {
+                            if selected >= per_page && results.borrow().len() > per_page as usize {
                                 selected -= per_page;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             }
                         }
                         'l' => {
                             let size = terminal.size().unwrap();
                             let per_page = size.height - 5;
 
-                            if selected < results.len() as u16 - per_page
-                                && results.len() > per_page as usize
+                            if selected < results.borrow().len() as u16 - per_page
+                                && results.borrow().len() > per_page as usize
                             {
                                 selected += per_page;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             }
                         }
                         'q' => {
@@ -288,7 +288,7 @@ fn main() -> Result<(), io::Error> {
                             selected = 0;
                         }
                         'G' => {
-                            selected = results.len() as u16 - 1;
+                            selected = results.borrow().len() as u16 - 1;
                         }
                         'R' => {
                             disable_raw_mode()?;
@@ -302,7 +302,8 @@ fn main() -> Result<(), io::Error> {
                             terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
                             let mut cmd = std::process::Command::new("paru");
-                            cmd.arg("-R").arg(results[selected as usize].clone());
+                            cmd.arg("-R")
+                                .arg(results.borrow()[selected as usize].clone());
                             cmd.exec();
 
                             return Ok(());
@@ -311,12 +312,12 @@ fn main() -> Result<(), io::Error> {
                         _ => (),
                     },
                     KeyCode::Enter => {
-                        if info.is_empty() {
-                            info = get_info(
-                                results[selected as usize].clone(),
+                        if info.borrow().is_empty() {
+                            info = Rc::new(RefCell::new(get_info(
+                                results.borrow()[selected as usize].clone(),
                                 selected as usize,
                                 &mut installed_cache,
-                            );
+                            )));
                         } else {
                             disable_raw_mode()?;
                             execute!(
@@ -329,7 +330,8 @@ fn main() -> Result<(), io::Error> {
                             terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
                             let mut cmd = std::process::Command::new("paru");
-                            cmd.arg("-S").arg(results[selected as usize].clone());
+                            cmd.arg("-S")
+                                .arg(results.borrow()[selected as usize].clone());
                             cmd.exec();
 
                             return Ok(());
@@ -342,22 +344,22 @@ fn main() -> Result<(), io::Error> {
                 if let Mode::Select = mode {
                     match m.kind {
                         MouseEventKind::ScrollDown => {
-                            let result_count = results.len();
+                            let result_count = results.borrow().len();
                             if result_count > 1 && selected < result_count as u16 - 1 {
                                 selected += 1;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             } else {
                                 selected = 0;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             }
                         }
                         MouseEventKind::ScrollUp => {
                             if selected > 0 {
                                 selected -= 1;
-                                info.clear();
+                                (*info).borrow_mut().clear();
                             } else {
-                                selected = results.len() as u16 - 1;
-                                info.clear();
+                                selected = results.borrow().len() as u16 - 1;
+                                (*info).borrow_mut().clear();
                             }
                         }
                         _ => (),
@@ -377,7 +379,7 @@ fn search(query: &str) -> String {
 }
 
 fn format_results(
-    lines: Vec<String>,
+    lines: Rc<RefCell<Vec<String>>>,
     height: usize,
     pad_to: usize,
     skip: usize,
@@ -386,18 +388,28 @@ fn format_results(
     let index_style = Style::default().fg(Color::Gray);
     let installed_style = Style::default().fg(Color::Green);
     let uninstalled_style = Style::default().fg(Color::White);
-    let lines = lines.into_iter().enumerate().skip(skip).take(height - 5);
-    is_installed(lines.clone(), cache);
+    let lines: Rc<Vec<String>> = Rc::new(
+        lines
+            .borrow()
+            .iter()
+            .map(|e| e.clone())
+            .skip(skip)
+            .take(height - 5)
+            .collect(),
+    );
+    is_installed(lines.clone(), skip, cache);
 
     lines
+        .iter()
+        .enumerate()
         .map(|(i, line)| {
-            let index_string = (i + 1).to_string();
+            let index_string = (i + skip + 1).to_string();
             Spans::from(vec![
                 Span::styled(index_string.clone(), index_style),
                 Span::raw(" ".repeat(pad_to - index_string.len() + 1)),
                 Span::styled(
                     line.clone(),
-                    if let Some(true) = cache.get(&i) {
+                    if let Some(true) = cache.get(&(i + skip)) {
                         installed_style
                     } else {
                         uninstalled_style
@@ -446,23 +458,22 @@ fn get_info(query: String, index: usize, cache: &mut HashMap<usize, bool>) -> Ve
     info
 }
 
-fn is_installed(
-    queries: std::iter::Take<Skip<Enumerate<std::vec::IntoIter<String>>>>,
-    cache: &mut HashMap<usize, bool>,
-) {
+fn is_installed(queries: Rc<Vec<String>>, skip: usize, cache: &mut HashMap<usize, bool>) {
     let mut cmd = std::process::Command::new("paru");
     cmd.arg("-Qq");
-    for q in queries.clone().map(|(_, q)| q) {
+    for q in queries.clone().iter() {
         cmd.arg(q);
     }
 
     let output = cmd.output().unwrap().stdout;
-    let output = String::from_utf8(output.clone()).unwrap();
-    for query in queries {
-        if cache.contains_key(&query.0) {
+    let output = String::from_utf8(output).unwrap();
+    let mut index;
+    for (i, query) in queries.iter().enumerate() {
+        index = i + skip;
+        if cache.contains_key(&(index)) {
             continue;
         }
-        let is_installed = output.contains(&(query.1 + "\n"));
-        cache.insert(query.0, is_installed);
+        let is_installed = output.contains(&(query.to_owned() + "\n"));
+        cache.insert(index, is_installed);
     }
 }
