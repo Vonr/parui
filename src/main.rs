@@ -205,6 +205,8 @@ fn main() -> Result<(), io::Error> {
                     },
                     KeyCode::Enter => {
                         (*results).borrow_mut().clear();
+                        installed_cache.clear();
+                        selected = 0;
                         let packages = search(&query);
 
                         for line in packages.lines().map(|line| line.to_string()) {
