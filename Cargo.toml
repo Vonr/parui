@@ -15,7 +15,7 @@ lto = true
 codegen-units = 1
 debug = 0
 opt-level = "s"
-strip = "debuginfo"
+strip = "symbols"
 
 [dependencies]
 crossterm = "0.23.2"
