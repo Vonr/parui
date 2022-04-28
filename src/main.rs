@@ -38,6 +38,7 @@ fn main() -> Result<(), io::Error> {
     let mut mode = Mode::Insert;
     let mut selected = 0;
     let mut info: Rc<RefCell<Vec<Spans>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut redraw = true;
 
     let mut installed_cache: HashMap<usize, bool> = HashMap::new();
 
@@ -45,89 +46,97 @@ fn main() -> Result<(), io::Error> {
     loop {
         let mut line = selected;
         let mut should_skip = false;
-        terminal.draw(|s| {
-            let size = s.size();
-            if size.height <= 5 {
-                should_skip = true;
-                return;
-            }
 
-            let chunks = Layout::default()
-                .constraints([Constraint::Min(3), Constraint::Percentage(100)].as_ref())
-                .split(size);
+        let size = terminal.size();
+        if size.is_err() {
+            continue;
+        }
+        let size = size.unwrap();
+        if size.height <= 5 {
+            should_skip = true;
+        }
 
-            let para = Paragraph::new(Spans::from(vec![Span::raw(&*query)]))
-                .block(
-                    Block::default()
-                        .title(Span::styled(
-                            "parui",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ))
-                        .title_alignment(Alignment::Center)
-                        .borders(Borders::ALL)
-                        .border_type(BorderType::Rounded),
-                )
-                .alignment(Alignment::Left);
-            s.render_widget(para, chunks[0]);
+        let page = selected / (size.height - 5);
+        let skipped = page * (size.height - 5);
+        line -= skipped;
 
-            let page = selected / (size.height - 5);
-            let skipped = page * (size.height - 5);
-            line -= skipped;
-            let para = Paragraph::new(format_results(
-                results.clone(),
-                size.height as usize,
-                results.borrow().len().to_string().len(),
-                skipped as usize,
-                &mut installed_cache,
-            ))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded),
-            )
-            .alignment(Alignment::Left);
-            s.render_widget(para, chunks[1]);
+        if redraw {
+            redraw = false;
+            terminal.draw(|s| {
+                let chunks = Layout::default()
+                    .constraints([Constraint::Min(3), Constraint::Percentage(100)].as_ref())
+                    .split(size);
 
-            if !info.borrow().is_empty() {
-                let area = Rect {
-                    x: size.width / 2,
-                    y: 4,
-                    width: size.width / 2,
-                    height: size.height - 5,
-                };
-                let info = Paragraph::new(info.borrow().clone())
+                let para = Paragraph::new(Spans::from(vec![Span::raw(&*query)]))
                     .block(
                         Block::default()
-                            .borders(Borders::ALL)
-                            .border_type(BorderType::Rounded),
-                    )
-                    .wrap(Wrap { trim: true })
-                    .alignment(Alignment::Left);
-                s.render_widget(Clear, area);
-                s.render_widget(info, area);
-            }
-
-            if results.borrow().is_empty() {
-                let area = Rect {
-                    x: size.width / 4 + 1,
-                    y: size.height / 2 - 2,
-                    width: size.width / 2,
-                    height: 4,
-                };
-                let info = Paragraph::new("No results, try searching for something else")
-                    .block(
-                        Block::default()
-                            .title("No Results")
+                            .title(Span::styled(
+                                "parui",
+                                Style::default().add_modifier(Modifier::BOLD),
+                            ))
                             .title_alignment(Alignment::Center)
                             .borders(Borders::ALL)
                             .border_type(BorderType::Rounded),
                     )
-                    .wrap(Wrap { trim: true })
                     .alignment(Alignment::Left);
-                s.render_widget(Clear, area);
-                s.render_widget(info, area);
-            }
-        })?;
+                s.render_widget(para, chunks[0]);
+
+                let para = Paragraph::new(format_results(
+                    results.clone(),
+                    size.height as usize,
+                    results.borrow().len().to_string().len(),
+                    skipped as usize,
+                    &mut installed_cache,
+                ))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded),
+                )
+                .alignment(Alignment::Left);
+                s.render_widget(para, chunks[1]);
+
+                if !info.borrow().is_empty() {
+                    let area = Rect {
+                        x: size.width / 2,
+                        y: 4,
+                        width: size.width / 2,
+                        height: size.height - 5,
+                    };
+                    let info = Paragraph::new(info.borrow().clone())
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_type(BorderType::Rounded),
+                        )
+                        .wrap(Wrap { trim: true })
+                        .alignment(Alignment::Left);
+                    s.render_widget(Clear, area);
+                    s.render_widget(info, area);
+                }
+
+                if results.borrow().is_empty() {
+                    let area = Rect {
+                        x: size.width / 4 + 1,
+                        y: size.height / 2 - 2,
+                        width: size.width / 2,
+                        height: 4,
+                    };
+                    let no_results = Paragraph::new("No results, try searching for something else")
+                        .block(
+                            Block::default()
+                                .title("No Results")
+                                .title_alignment(Alignment::Center)
+                                .borders(Borders::ALL)
+                                .border_type(BorderType::Rounded),
+                        )
+                        .wrap(Wrap { trim: true })
+                        .alignment(Alignment::Center);
+                    s.render_widget(Clear, area);
+                    s.render_widget(no_results, area);
+                }
+            })?;
+        }
 
         if should_skip {
             continue;
@@ -149,12 +158,14 @@ fn main() -> Result<(), io::Error> {
                 Mode::Insert => match k.code {
                     KeyCode::Esc => {
                         selected = 0;
+                        redraw = true;
                         mode = Mode::Select;
                     }
                     KeyCode::Backspace => {
                         if !query.is_empty() {
                             query.to_mut().pop();
                         }
+                        redraw = true;
                     }
                     KeyCode::Char(c) => match c {
                         'c' => {
@@ -171,6 +182,7 @@ fn main() -> Result<(), io::Error> {
                                 return Ok(());
                             }
                             query.to_mut().push(c);
+                            redraw = true;
                         }
                         'w' => {
                             if k.modifiers == KeyModifiers::CONTROL {
@@ -183,9 +195,13 @@ fn main() -> Result<(), io::Error> {
                                 }
                                 let chars = chars.rev().collect::<String>();
                                 query = Cow::Owned(chars);
+                                redraw = true;
                             }
                         }
-                        _ => query.to_mut().push(c),
+                        _ => {
+                            query.to_mut().push(c);
+                            redraw = true;
+                        }
                     },
                     KeyCode::Enter => {
                         (*results).borrow_mut().clear();
@@ -194,41 +210,40 @@ fn main() -> Result<(), io::Error> {
                         for line in packages.lines().map(|line| line.to_string()) {
                             (*results).borrow_mut().push(line);
                         }
+                        redraw = true;
                         mode = Mode::Select;
                     }
-                    _ => (),
+                    _ => redraw = true,
                 },
                 Mode::Select => match k.code {
                     KeyCode::Up => {
-                        if let Mode::Select = mode {
-                            if selected > 0 {
-                                selected -= 1;
-                                (*info).borrow_mut().clear();
-                            } else {
-                                selected = results.borrow().len() as u16 - 1;
-                                (*info).borrow_mut().clear();
-                            }
+                        if selected > 0 {
+                            selected -= 1;
+                            (*info).borrow_mut().clear();
+                        } else {
+                            selected = results.borrow().len() as u16 - 1;
+                            (*info).borrow_mut().clear();
                         }
+                        redraw = true;
                     }
                     KeyCode::Down => {
-                        if let Mode::Select = mode {
-                            let result_count = results.borrow().len();
-                            if result_count > 1 && selected < result_count as u16 - 1 {
-                                selected += 1;
-                                (*info).borrow_mut().clear();
-                            } else {
-                                selected = 0;
-                                (*info).borrow_mut().clear();
-                            }
+                        let result_count = results.borrow().len();
+                        if result_count > 1 && selected < result_count as u16 - 1 {
+                            selected += 1;
+                            (*info).borrow_mut().clear();
+                        } else {
+                            selected = 0;
+                            (*info).borrow_mut().clear();
                         }
+                        redraw = true;
                     }
                     KeyCode::Left => {
-                        let size = terminal.size().unwrap();
                         let per_page = size.height - 5;
 
                         if selected >= per_page && results.borrow().len() > per_page as usize {
                             selected -= per_page;
                             (*info).borrow_mut().clear();
+                            redraw = true;
                         }
                     }
                     KeyCode::Right => {
@@ -240,20 +255,30 @@ fn main() -> Result<(), io::Error> {
                         {
                             selected += per_page;
                             (*info).borrow_mut().clear();
+                            redraw = true;
                         }
                     }
                     KeyCode::Char(c) => match c {
                         'j' => {
-                            if selected < results.borrow().len() as u16 - 1 {
-                                selected += 1;
-                                (*info).borrow_mut().clear();
-                            }
-                        }
-                        'k' => {
                             if selected > 0 {
                                 selected -= 1;
                                 (*info).borrow_mut().clear();
+                            } else {
+                                selected = results.borrow().len() as u16 - 1;
+                                (*info).borrow_mut().clear();
                             }
+                            redraw = true;
+                        }
+                        'k' => {
+                            let result_count = results.borrow().len();
+                            if result_count > 1 && selected < result_count as u16 - 1 {
+                                selected += 1;
+                                (*info).borrow_mut().clear();
+                            } else {
+                                selected = 0;
+                                (*info).borrow_mut().clear();
+                            }
+                            redraw = true;
                         }
                         'h' => {
                             let size = terminal.size().unwrap();
@@ -262,6 +287,7 @@ fn main() -> Result<(), io::Error> {
                             if selected >= per_page && results.borrow().len() > per_page as usize {
                                 selected -= per_page;
                                 (*info).borrow_mut().clear();
+                                redraw = true;
                             }
                         }
                         'l' => {
@@ -273,6 +299,7 @@ fn main() -> Result<(), io::Error> {
                             {
                                 selected += per_page;
                                 (*info).borrow_mut().clear();
+                                redraw = true;
                             }
                         }
                         'q' => {
@@ -288,6 +315,7 @@ fn main() -> Result<(), io::Error> {
                             return Ok(());
                         }
                         'i' => {
+                            redraw = true;
                             mode = Mode::Insert;
                         }
                         'c' => {
@@ -304,12 +332,15 @@ fn main() -> Result<(), io::Error> {
                                 return Ok(());
                             }
                             query.to_mut().push(c);
+                            redraw = true;
                         }
                         'g' => {
                             selected = 0;
+                            redraw = true;
                         }
                         'G' => {
                             selected = results.borrow().len() as u16 - 1;
+                            redraw = true;
                         }
                         'R' => {
                             disable_raw_mode()?;
@@ -330,7 +361,7 @@ fn main() -> Result<(), io::Error> {
                             return Ok(());
                         }
 
-                        _ => (),
+                        _ => redraw = true,
                     },
                     KeyCode::Enter => {
                         if info.borrow().is_empty() {
@@ -339,6 +370,7 @@ fn main() -> Result<(), io::Error> {
                                 selected as usize,
                                 &mut installed_cache,
                             )));
+                            redraw = true;
                         } else {
                             disable_raw_mode()?;
                             execute!(
@@ -358,7 +390,7 @@ fn main() -> Result<(), io::Error> {
                             return Ok(());
                         }
                     }
-                    _ => (),
+                    _ => redraw = true,
                 },
             },
             Event::Mouse(m) => {
@@ -386,8 +418,9 @@ fn main() -> Result<(), io::Error> {
                         _ => (),
                     }
                 }
+                redraw = true;
             }
-            _ => (),
+            Event::Resize(..) => redraw = true,
         }
     }
 }
