@@ -96,25 +96,6 @@ fn main() -> Result<(), io::Error> {
                 .alignment(Alignment::Left);
                 s.render_widget(para, chunks[1]);
 
-                if !info.borrow().is_empty() {
-                    let area = Rect {
-                        x: size.width / 2,
-                        y: 4,
-                        width: size.width / 2,
-                        height: size.height - 5,
-                    };
-                    let info = Paragraph::new(info.borrow().clone())
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .border_type(BorderType::Rounded),
-                        )
-                        .wrap(Wrap { trim: true })
-                        .alignment(Alignment::Left);
-                    s.render_widget(Clear, area);
-                    s.render_widget(info, area);
-                }
-
                 if results.borrow().is_empty() {
                     let area = Rect {
                         x: size.width / 4 + 1,
@@ -134,6 +115,30 @@ fn main() -> Result<(), io::Error> {
                         .alignment(Alignment::Center);
                     s.render_widget(Clear, area);
                     s.render_widget(no_results, area);
+                } else {
+                    let area = Rect {
+                        x: size.width / 2,
+                        y: 4,
+                        width: size.width / 2,
+                        height: size.height - 5,
+                    };
+                    let info = Paragraph::new(if info.borrow().is_empty() {
+                        vec![Spans::from(Span::styled(
+                            "Press ENTER to show package information",
+                            Style::default().fg(Color::Green),
+                        ))]
+                    } else {
+                        info.borrow().clone()
+                    })
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded),
+                    )
+                    .wrap(Wrap { trim: true })
+                    .alignment(Alignment::Left);
+                    s.render_widget(Clear, area);
+                    s.render_widget(info, area);
                 }
             })?;
         }
