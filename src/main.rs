@@ -214,6 +214,7 @@ fn main() -> Result<(), io::Error> {
                         installed_cache.clear();
                         info.borrow_mut().clear();
                         selected = 0;
+                        terminal.set_cursor(1, 4)?;
                         let packages = search(&query);
 
                         for line in packages.lines().map(|line| line.to_string()) {
