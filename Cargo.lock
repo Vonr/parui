@@ -77,6 +77,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memx"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d834254fe7334e4bc3a27f93e812987ae7ebd1fd1e96269ac763b5784ec9601f"
+dependencies = [
+ "rustc_version",
+]
+
+[[package]]
 name = "mio"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -97,6 +106,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9f1c5b025cda876f66ef43a113f91ebc9f4ccef34843000e0adf6ebbab84e21"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "naive_opt"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "489166b60e599eaadcd921c0a43697c6ba19ce8bb53ad34549a1ae1a577d0c77"
+dependencies = [
+ "memx",
 ]
 
 [[package]]
@@ -136,6 +154,7 @@ name = "parui"
 version = "0.1.4"
 dependencies = [
  "crossterm",
+ "naive_opt",
  "tui",
 ]
 
@@ -149,10 +168,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc_version"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
+dependencies = [
+ "semver",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
+
+[[package]]
+name = "semver"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d65bd28f48be7196d222d95b9243287f48d27aca604e08497513019ff0502cc4"
 
 [[package]]
 name = "signal-hook"

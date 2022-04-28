@@ -11,6 +11,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use naive_opt::Search;
 use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
 use tui::{
@@ -535,7 +536,7 @@ fn is_installed(queries: Rc<Vec<String>>, skip: usize, cache: &mut HashMap<usize
         if cache.contains_key(&index) {
             continue;
         }
-        let is_installed = output.contains(&(query.to_owned() + "\n"));
+        let is_installed = output.includes(&(query.to_owned() + "\n"));
         cache.insert(index, is_installed);
     }
 }
