@@ -1,7 +1,7 @@
 [package]
 name = "parui"
 description = "Simple TUI frontend for paru."
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
