@@ -209,13 +209,13 @@ fn main() -> Result<(), io::Error> {
                         }
                     },
                     KeyCode::Enter => {
-                        (*results).borrow_mut().clear();
+                        results.borrow_mut().clear();
                         installed_cache.clear();
                         selected = 0;
                         let packages = search(&query);
 
                         for line in packages.lines().map(|line| line.to_string()) {
-                            (*results).borrow_mut().push(line);
+                            results.borrow_mut().push(line);
                         }
                         redraw = true;
                         mode = Mode::Select;
@@ -226,10 +226,10 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Up => {
                         if selected > 0 {
                             selected -= 1;
-                            (*info).borrow_mut().clear();
+                            info.borrow_mut().clear();
                         } else {
                             selected = results.borrow().len() as u16 - 1;
-                            (*info).borrow_mut().clear();
+                            info.borrow_mut().clear();
                         }
                         redraw = true;
                     }
@@ -237,10 +237,10 @@ fn main() -> Result<(), io::Error> {
                         let result_count = results.borrow().len();
                         if result_count > 1 && selected < result_count as u16 - 1 {
                             selected += 1;
-                            (*info).borrow_mut().clear();
+                            info.borrow_mut().clear();
                         } else {
                             selected = 0;
-                            (*info).borrow_mut().clear();
+                            info.borrow_mut().clear();
                         }
                         redraw = true;
                     }
@@ -249,7 +249,7 @@ fn main() -> Result<(), io::Error> {
 
                         if selected >= per_page && results.borrow().len() > per_page as usize {
                             selected -= per_page;
-                            (*info).borrow_mut().clear();
+                            info.borrow_mut().clear();
                             redraw = true;
                         }
                     }
@@ -261,7 +261,7 @@ fn main() -> Result<(), io::Error> {
                             && results.borrow().len() > per_page as usize
                         {
                             selected += per_page;
-                            (*info).borrow_mut().clear();
+                            info.borrow_mut().clear();
                             redraw = true;
                         }
                     }
@@ -269,10 +269,10 @@ fn main() -> Result<(), io::Error> {
                         'j' => {
                             if selected > 0 {
                                 selected -= 1;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             } else {
                                 selected = results.borrow().len() as u16 - 1;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             }
                             redraw = true;
                         }
@@ -280,10 +280,10 @@ fn main() -> Result<(), io::Error> {
                             let result_count = results.borrow().len();
                             if result_count > 1 && selected < result_count as u16 - 1 {
                                 selected += 1;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             } else {
                                 selected = 0;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             }
                             redraw = true;
                         }
@@ -293,7 +293,7 @@ fn main() -> Result<(), io::Error> {
 
                             if selected >= per_page && results.borrow().len() > per_page as usize {
                                 selected -= per_page;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                                 redraw = true;
                             }
                         }
@@ -305,7 +305,7 @@ fn main() -> Result<(), io::Error> {
                                 && results.borrow().len() > per_page as usize
                             {
                                 selected += per_page;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                                 redraw = true;
                             }
                         }
@@ -407,19 +407,19 @@ fn main() -> Result<(), io::Error> {
                             let result_count = results.borrow().len();
                             if result_count > 1 && selected < result_count as u16 - 1 {
                                 selected += 1;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             } else {
                                 selected = 0;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             }
                         }
                         MouseEventKind::ScrollUp => {
                             if selected > 0 {
                                 selected -= 1;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             } else {
                                 selected = results.borrow().len() as u16 - 1;
-                                (*info).borrow_mut().clear();
+                                info.borrow_mut().clear();
                             }
                         }
                         _ => (),
