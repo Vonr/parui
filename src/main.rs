@@ -1,6 +1,7 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io;
+use std::ops::Deref;
 use std::rc::Rc;
 use std::{borrow::Cow, os::unix::prelude::CommandExt};
 
@@ -41,7 +42,8 @@ fn main() -> Result<(), io::Error> {
     let mut info: Rc<RefCell<Vec<Spans>>> = Rc::new(RefCell::new(Vec::new()));
     let mut redraw = true;
 
-    let mut installed_cache: HashMap<usize, bool> = HashMap::new();
+    let mut installed_cache: HashSet<usize> = HashSet::new();
+    let mut uninstalled_cache: HashSet<usize> = HashSet::new();
 
     terminal.clear()?;
     loop {
@@ -88,6 +90,7 @@ fn main() -> Result<(), io::Error> {
                     results.borrow().len().to_string().len(),
                     skipped as usize,
                     &mut installed_cache,
+                    &mut uninstalled_cache,
                 ))
                 .block(
                     Block::default()
@@ -213,6 +216,7 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Enter => {
                         results.borrow_mut().clear();
                         installed_cache.clear();
+                        uninstalled_cache.clear();
                         info.borrow_mut().clear();
                         selected = 0;
                         terminal.set_cursor(1, 4)?;
@@ -381,7 +385,7 @@ fn main() -> Result<(), io::Error> {
                             info = Rc::new(RefCell::new(get_info(
                                 results.borrow()[selected as usize].clone(),
                                 selected as usize,
-                                &mut installed_cache,
+                                &installed_cache,
                             )));
                             redraw = true;
                         } else {
@@ -450,7 +454,8 @@ fn format_results(
     height: usize,
     pad_to: usize,
     skip: usize,
-    cache: &mut HashMap<usize, bool>,
+    installed_cache: &mut HashSet<usize>,
+    uninstalled_cache: &mut HashSet<usize>,
 ) -> Vec<Spans<'static>> {
     let index_style = Style::default().fg(Color::Gray);
     let installed_style = Style::default().fg(Color::Green);
@@ -464,7 +469,7 @@ fn format_results(
             .take(height - 5)
             .collect(),
     );
-    is_installed(lines.clone(), skip, cache);
+    is_installed(lines.clone(), skip, installed_cache, uninstalled_cache);
 
     lines
         .iter()
@@ -476,7 +481,7 @@ fn format_results(
                 Span::raw(" ".repeat(pad_to - index_string.len() + 1)),
                 Span::styled(
                     line.clone(),
-                    if let Some(true) = cache.get(&(i + skip)) {
+                    if installed_cache.contains(&(i + skip)) {
                         installed_style
                     } else {
                         uninstalled_style
@@ -487,10 +492,10 @@ fn format_results(
         .collect()
 }
 
-fn get_info(query: String, index: usize, cache: &mut HashMap<usize, bool>) -> Vec<Spans<'static>> {
+fn get_info(query: String, index: usize, installed_cache: &HashSet<usize>) -> Vec<Spans<'static>> {
     let mut cmd = std::process::Command::new("paru");
     let mut info = Vec::new();
-    let stdout = if let Some(true) = cache.get(&index) {
+    let stdout = if installed_cache.contains(&index) {
         cmd.arg("-Qi").arg(query);
         let output = cmd.output().unwrap();
 
@@ -525,20 +530,29 @@ fn get_info(query: String, index: usize, cache: &mut HashMap<usize, bool>) -> Ve
     info
 }
 
-fn is_installed(queries: Rc<Vec<String>>, skip: usize, cache: &mut HashMap<usize, bool>) {
+fn is_installed(
+    queries: Rc<Vec<String>>,
+    skip: usize,
+    installed_cache: &mut HashSet<usize>,
+    uninstalled_cache: &mut HashSet<usize>,
+) {
     let mut cmd = std::process::Command::new("paru");
     cmd.arg("-Qq");
-    cmd.args(queries.clone().iter());
+    cmd.args(queries.clone().as_slice());
 
     let output = cmd.output().unwrap().stdout;
     let output = String::from_utf8(output).unwrap();
     let mut index;
-    for (i, query) in queries.iter().enumerate() {
+    for (i, query) in queries.deref().into_iter().enumerate() {
         index = i + skip;
-        if cache.contains_key(&index) {
+        if installed_cache.contains(&index) || uninstalled_cache.contains(&index) {
             continue;
         }
         let is_installed = output.includes(&(query.to_owned() + "\n"));
-        cache.insert(index, is_installed);
+        if is_installed {
+            installed_cache.insert(index);
+        } else {
+            uninstalled_cache.insert(index);
+        }
     }
 }
