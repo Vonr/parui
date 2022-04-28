@@ -524,16 +524,14 @@ fn get_info(query: String, index: usize, cache: &mut HashMap<usize, bool>) -> Ve
 fn is_installed(queries: Rc<Vec<String>>, skip: usize, cache: &mut HashMap<usize, bool>) {
     let mut cmd = std::process::Command::new("paru");
     cmd.arg("-Qq");
-    for q in queries.clone().iter() {
-        cmd.arg(q);
-    }
+    cmd.args(queries.clone().iter());
 
     let output = cmd.output().unwrap().stdout;
     let output = String::from_utf8(output).unwrap();
     let mut index;
     for (i, query) in queries.iter().enumerate() {
         index = i + skip;
-        if cache.contains_key(&(index)) {
+        if cache.contains_key(&index) {
             continue;
         }
         let is_installed = output.contains(&(query.to_owned() + "\n"));
