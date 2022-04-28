@@ -218,9 +218,11 @@ fn main() -> Result<(), io::Error> {
                         terminal.set_cursor(1, 4)?;
                         let packages = search(&query);
 
-                        for line in packages.lines().map(|line| line.to_string()) {
-                            results.borrow_mut().push(line);
+                        let mut res_handle = results.borrow_mut();
+                        for line in packages.lines() {
+                            res_handle.push(line.to_owned());
                         }
+
                         redraw = true;
                         mode = Mode::Select;
                     }
