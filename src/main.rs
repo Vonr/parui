@@ -106,6 +106,27 @@ fn main() -> Result<(), io::Error> {
                 s.render_widget(Clear, area);
                 s.render_widget(info, area);
             }
+
+            if results.borrow().is_empty() {
+                let area = Rect {
+                    x: size.width / 4 + 1,
+                    y: size.height / 2 - 2,
+                    width: size.width / 2,
+                    height: 4,
+                };
+                let info = Paragraph::new("No results, try searching for something else")
+                    .block(
+                        Block::default()
+                            .title("No Results")
+                            .title_alignment(Alignment::Center)
+                            .borders(Borders::ALL)
+                            .border_type(BorderType::Rounded),
+                    )
+                    .wrap(Wrap { trim: true })
+                    .alignment(Alignment::Left);
+                s.render_widget(Clear, area);
+                s.render_widget(info, area);
+            }
         })?;
 
         if should_skip {
