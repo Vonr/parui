@@ -211,6 +211,7 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Enter => {
                         results.borrow_mut().clear();
                         installed_cache.clear();
+                        info.borrow_mut().clear();
                         selected = 0;
                         let packages = search(&query);
 
