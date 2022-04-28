@@ -493,7 +493,7 @@ fn get_info(query: String, index: usize, cache: &mut HashMap<usize, bool>) -> Ve
             Style::default().fg(Color::Green),
         )));
         info.push(Spans::from(Span::styled(
-            "Press R to uninstall this package".to_owned(),
+            "Press Shift-R to uninstall this package".to_owned(),
             Style::default().fg(Color::Red),
         )));
 
