@@ -194,8 +194,9 @@ fn main() -> Result<(), io::Error> {
                                 let chars = query.clone();
                                 let mut chars = chars.chars().rev();
                                 while let Some(c) = chars.next() {
-                                    if c == ' ' {
-                                        break;
+                                    match c {
+                                        ' ' | '-' | '_' => break,
+                                        _ => (),
                                     }
                                 }
                                 let chars = chars.rev().collect::<String>();
