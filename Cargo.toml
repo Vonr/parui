@@ -9,6 +9,10 @@ homepage = "https://github.com/Vonr/parui"
 repository = "https://github.com/Vonr/parui"
 keywords = ["tui", "terminal", "frontend", "paru"]
 
+[profile.release]
+lto = true
+codegen-units = 1
+
 [dependencies]
 crossterm = "0.23.2"
 tui = { version = "0.18", features = ["crossterm"] }
