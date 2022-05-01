@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::io;
-use std::ops::Deref;
 use std::rc::Rc;
 use std::{borrow::Cow, os::unix::prelude::CommandExt};
 
@@ -195,7 +194,7 @@ fn main() -> Result<(), io::Error> {
                         'w' => {
                             if k.modifiers == KeyModifiers::CONTROL {
                                 let mut chars = query.chars().rev();
-                                while let Some(c) = chars.next() {
+                                for c in chars.by_ref() {
                                     match c {
                                         ' ' | '-' | '_' => break,
                                         _ => (),
@@ -424,9 +423,9 @@ fn format_results(
         lines
             .borrow()
             .iter()
-            .map(|e| e.clone())
             .skip(skip)
             .take(height - 5)
+            .cloned()
             .collect(),
     );
     is_installed(lines.clone(), skip, installed_cache, cached_pages);
@@ -439,7 +438,7 @@ fn format_results(
             let index = i + skip;
             let index_string = index.to_string();
             Spans::from(vec![
-                Span::styled(index_string.clone(), index_style),
+                Span::styled(index_string, index_style),
                 Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
                 Span::styled(
                     line.clone(),
@@ -479,7 +478,7 @@ fn get_info(query: &String, index: usize, installed_cache: &HashSet<usize>) -> V
     let stdout = String::from_utf8(output.stdout).unwrap();
 
     for line in stdout.lines().map(|c| c.to_owned()) {
-        if line.contains(":") {
+        if line.contains(':') {
             let (key, value) = line.split_once(':').unwrap();
             info.push(Spans::from(vec![
                 Span::styled(
@@ -508,12 +507,12 @@ fn is_installed(
 
     let mut cmd = std::process::Command::new("paru");
     cmd.arg("-Qq");
-    cmd.args(queries.clone().as_slice());
+    cmd.args(queries.as_slice());
 
     let output = cmd.output().unwrap().stdout;
     let output = String::from_utf8(output).unwrap();
     let mut index;
-    for (i, query) in queries.deref().into_iter().enumerate() {
+    for (i, query) in queries.iter().enumerate() {
         index = i + skip;
         let is_installed = output.includes(&(query.to_owned() + "\n"));
         if is_installed {
