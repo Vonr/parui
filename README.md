@@ -24,7 +24,7 @@ parui adopts vim-like keybinds.
 | q                  | Select | Exits parui             |
 
 ### Images
-![Start Screen](images/start_screen.png)
+![Start Screen](images/start.png)
 ![Search](images/search.png)
 ![Info](images/info.png)
 ![Info Scrolling](images/info_scrolling.png)
