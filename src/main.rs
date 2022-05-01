@@ -506,7 +506,7 @@ fn get_info(query: &String, index: usize, installed_cache: &HashSet<usize>) -> V
     } else {
         cmd.arg("-Si").arg(query);
     };
-    info.push(Spans::from(Span::raw("")));
+    info.push(Spans::default());
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
