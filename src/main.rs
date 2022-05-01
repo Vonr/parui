@@ -5,7 +5,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::{borrow::Cow, os::unix::prelude::CommandExt};
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -68,18 +68,21 @@ fn main() -> Result<(), io::Error> {
                     .constraints([Constraint::Min(3), Constraint::Percentage(100)].as_ref())
                     .split(size);
 
-                let para = Paragraph::new(Spans::from(vec![Span::raw(&*query)]))
-                    .block(
-                        Block::default()
-                            .title(Span::styled(
-                                "parui",
-                                Style::default().add_modifier(Modifier::BOLD),
-                            ))
-                            .title_alignment(Alignment::Center)
-                            .borders(Borders::ALL)
-                            .border_type(BorderType::Rounded),
-                    )
-                    .alignment(Alignment::Left);
+                let para = Paragraph::new(Spans::from(vec![
+                    Span::styled("Search: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(&*query),
+                ]))
+                .block(
+                    Block::default()
+                        .title(Span::styled(
+                            "parui",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ))
+                        .title_alignment(Alignment::Center)
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded),
+                )
+                .alignment(Alignment::Left);
                 s.render_widget(para, chunks[0]);
 
                 let para = Paragraph::new(format_results(
@@ -127,7 +130,9 @@ fn main() -> Result<(), io::Error> {
                     let info = Paragraph::new(if info.borrow().is_empty() {
                         vec![Spans::from(Span::styled(
                             "Press ENTER to show package information",
-                            Style::default().fg(Color::Green),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
                         ))]
                     } else {
                         info.borrow().clone()
@@ -151,7 +156,7 @@ fn main() -> Result<(), io::Error> {
 
         match mode {
             Mode::Insert => {
-                terminal.set_cursor(query.len() as u16 + 1, 1)?;
+                terminal.set_cursor(query.len() as u16 + 9, 1)?;
             }
             Mode::Select => {
                 terminal.set_cursor(1, line + 4)?;
@@ -198,6 +203,9 @@ fn main() -> Result<(), io::Error> {
                                 }
                                 let chars = chars.rev().collect::<String>();
                                 query = Cow::Owned(chars);
+                                redraw = true;
+                            } else {
+                                query.to_mut().push(c);
                                 redraw = true;
                             }
                         }
@@ -385,34 +393,7 @@ fn main() -> Result<(), io::Error> {
                     _ => redraw = true,
                 },
             },
-            Event::Mouse(m) => {
-                if let Mode::Select = mode {
-                    match m.kind {
-                        MouseEventKind::ScrollDown => {
-                            let result_count = results.borrow().len();
-                            if result_count > 1 && selected < result_count as u16 - 1 {
-                                selected += 1;
-                                info.borrow_mut().clear();
-                            } else {
-                                selected = 0;
-                                info.borrow_mut().clear();
-                            }
-                        }
-                        MouseEventKind::ScrollUp => {
-                            if selected > 0 {
-                                selected -= 1;
-                                info.borrow_mut().clear();
-                            } else {
-                                selected = results.borrow().len() as u16 - 1;
-                                info.borrow_mut().clear();
-                            }
-                        }
-                        _ => (),
-                    }
-                }
-                redraw = true;
-            }
-            Event::Resize(..) => redraw = true,
+            _ => redraw = true,
         }
     }
 }
@@ -433,8 +414,12 @@ fn format_results(
     cached_pages: &mut HashSet<usize>,
 ) -> Vec<Spans<'static>> {
     let index_style = Style::default().fg(Color::Gray);
-    let installed_style = Style::default().fg(Color::Green);
-    let uninstalled_style = Style::default().fg(Color::White);
+    let installed_style = Style::default()
+        .fg(Color::Green)
+        .add_modifier(Modifier::BOLD);
+    let uninstalled_style = Style::default()
+        .fg(Color::LightBlue)
+        .add_modifier(Modifier::BOLD);
     let lines: Rc<Vec<String>> = Rc::new(
         lines
             .borrow()
@@ -474,13 +459,15 @@ fn get_info(query: &String, index: usize, installed_cache: &HashSet<usize>) -> V
 
     let mut info = vec![Spans::from(Span::styled(
         "Press ENTER again to install this package",
-        Style::default().fg(Color::Green),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
     ))];
 
     if installed_cache.contains(&index) {
         info.push(Spans::from(Span::styled(
             "Press Shift-R to uninstall this package".to_owned(),
-            Style::default().fg(Color::Red),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )));
         cmd.arg("-Qi").arg(query);
     } else {
@@ -492,7 +479,18 @@ fn get_info(query: &String, index: usize, installed_cache: &HashSet<usize>) -> V
     let stdout = String::from_utf8(output.stdout).unwrap();
 
     for line in stdout.lines().map(|c| c.to_owned()) {
-        info.push(Spans::from(Span::raw(line)));
+        if line.contains(":") {
+            let (key, value) = line.split_once(':').unwrap();
+            info.push(Spans::from(vec![
+                Span::styled(
+                    key.to_owned() + ":",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(value.to_owned()),
+            ]));
+        } else {
+            info.push(Spans::from(Span::raw(line.to_owned())));
+        }
     }
 
     info
