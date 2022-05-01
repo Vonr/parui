@@ -476,7 +476,7 @@ fn format_results(
                 Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
                 Span::styled(
                     line.clone(),
-                    if installed_cache.contains(&(i + skip)) {
+                    if installed_cache.contains(&(i + skip - 1)) {
                         installed_style
                     } else {
                         uninstalled_style
