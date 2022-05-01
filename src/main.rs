@@ -36,6 +36,7 @@ fn main() -> Result<(), io::Error> {
     let results: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let mut mode = Mode::Insert;
     let mut selected = 0;
+    let mut info_scroll = 0;
     let mut info: Rc<RefCell<Vec<Spans>>> = Rc::new(RefCell::new(Vec::new()));
     let mut redraw = true;
 
@@ -134,7 +135,7 @@ fn main() -> Result<(), io::Error> {
                                 .add_modifier(Modifier::BOLD),
                         ))]
                     } else {
-                        info.borrow().clone()
+                        info.borrow().iter().skip(info_scroll).cloned().collect()
                     })
                     .block(
                         Block::default()
@@ -234,25 +235,40 @@ fn main() -> Result<(), io::Error> {
                 },
                 Mode::Select => match k.code {
                     KeyCode::Up => {
-                        if selected > 0 {
-                            selected -= 1;
-                            info.borrow_mut().clear();
+                        if k.modifiers == KeyModifiers::CONTROL {
+                            if info_scroll > 0 {
+                                info_scroll -= 1;
+                                redraw = true;
+                            }
                         } else {
-                            selected = results.borrow().len() as u16 - 1;
-                            info.borrow_mut().clear();
+                            if selected > 0 {
+                                selected -= 1;
+                                info.borrow_mut().clear();
+                            } else {
+                                selected = results.borrow().len() as u16 - 1;
+                                info.borrow_mut().clear();
+                            }
+                            redraw = true;
                         }
-                        redraw = true;
                     }
                     KeyCode::Down => {
-                        let result_count = results.borrow().len();
-                        if result_count > 1 && selected < result_count as u16 - 1 {
-                            selected += 1;
-                            info.borrow_mut().clear();
+                        if k.modifiers == KeyModifiers::CONTROL {
+                            let info = info.borrow();
+                            if !info.is_empty() {
+                                info_scroll += 1;
+                                redraw = true;
+                            }
                         } else {
-                            selected = 0;
-                            info.borrow_mut().clear();
+                            let result_count = results.borrow().len();
+                            if result_count > 1 && selected < result_count as u16 - 1 {
+                                selected += 1;
+                                info.borrow_mut().clear();
+                            } else {
+                                selected = 0;
+                                info.borrow_mut().clear();
+                            }
+                            redraw = true;
                         }
-                        redraw = true;
                     }
                     KeyCode::Left => {
                         let per_page = size.height - 5;
@@ -277,25 +293,40 @@ fn main() -> Result<(), io::Error> {
                     }
                     KeyCode::Char(c) => match c {
                         'j' => {
-                            if selected > 0 {
-                                selected -= 1;
-                                info.borrow_mut().clear();
+                            if k.modifiers == KeyModifiers::CONTROL {
+                                if info_scroll > 0 {
+                                    info_scroll -= 1;
+                                    redraw = true;
+                                }
                             } else {
-                                selected = results.borrow().len() as u16 - 1;
-                                info.borrow_mut().clear();
+                                if selected > 0 {
+                                    selected -= 1;
+                                    info.borrow_mut().clear();
+                                } else {
+                                    selected = results.borrow().len() as u16 - 1;
+                                    info.borrow_mut().clear();
+                                }
+                                redraw = true;
                             }
-                            redraw = true;
                         }
                         'k' => {
-                            let result_count = results.borrow().len();
-                            if result_count > 1 && selected < result_count as u16 - 1 {
-                                selected += 1;
-                                info.borrow_mut().clear();
+                            if k.modifiers == KeyModifiers::CONTROL {
+                                let info = info.borrow();
+                                if !info.is_empty() {
+                                    info_scroll += 1;
+                                    redraw = true;
+                                }
                             } else {
-                                selected = 0;
-                                info.borrow_mut().clear();
+                                let result_count = results.borrow().len();
+                                if result_count > 1 && selected < result_count as u16 - 1 {
+                                    selected += 1;
+                                    info.borrow_mut().clear();
+                                } else {
+                                    selected = 0;
+                                    info.borrow_mut().clear();
+                                }
+                                redraw = true;
                             }
-                            redraw = true;
                         }
                         'h' => {
                             let size = terminal.size().unwrap();
