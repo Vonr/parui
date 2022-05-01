@@ -43,7 +43,7 @@ fn main() -> Result<(), io::Error> {
     let mut redraw = true;
 
     let mut installed_cache: HashSet<usize> = HashSet::new();
-    let mut uninstalled_cache: HashSet<usize> = HashSet::new();
+    let mut cached_pages: HashSet<usize> = HashSet::new();
 
     terminal.clear()?;
     loop {
@@ -87,10 +87,10 @@ fn main() -> Result<(), io::Error> {
                 let para = Paragraph::new(format_results(
                     results.clone(),
                     size.height as usize,
-                    results.borrow().len().to_string().len(),
+                    (results.borrow().len() as f32 + 1f32).log10().ceil() as usize,
                     skipped as usize,
                     &mut installed_cache,
-                    &mut uninstalled_cache,
+                    &mut cached_pages,
                 ))
                 .block(
                     Block::default()
@@ -195,8 +195,7 @@ fn main() -> Result<(), io::Error> {
                         }
                         'w' => {
                             if k.modifiers == KeyModifiers::CONTROL {
-                                let chars = query.clone();
-                                let mut chars = chars.chars().rev();
+                                let mut chars = query.chars().rev();
                                 while let Some(c) = chars.next() {
                                     match c {
                                         ' ' | '-' | '_' => break,
@@ -216,7 +215,7 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Enter => {
                         results.borrow_mut().clear();
                         installed_cache.clear();
-                        uninstalled_cache.clear();
+                        cached_pages.clear();
                         info.borrow_mut().clear();
                         selected = 0;
                         terminal.set_cursor(1, 4)?;
@@ -371,8 +370,7 @@ fn main() -> Result<(), io::Error> {
                             terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
                             let mut cmd = std::process::Command::new("paru");
-                            cmd.arg("-R")
-                                .arg(results.borrow()[selected as usize].clone());
+                            cmd.arg("-R").arg(&(results.borrow()[selected as usize]));
                             cmd.exec();
 
                             return Ok(());
@@ -383,7 +381,7 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Enter => {
                         if info.borrow().is_empty() {
                             info = Rc::new(RefCell::new(get_info(
-                                results.borrow()[selected as usize].clone(),
+                                &(results.borrow()[selected as usize]),
                                 selected as usize,
                                 &installed_cache,
                             )));
@@ -400,8 +398,7 @@ fn main() -> Result<(), io::Error> {
                             terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
                             let mut cmd = std::process::Command::new("paru");
-                            cmd.arg("-S")
-                                .arg(results.borrow()[selected as usize].clone());
+                            cmd.arg("-S").arg(&(results.borrow()[selected as usize]));
                             cmd.exec();
 
                             return Ok(());
@@ -455,7 +452,7 @@ fn format_results(
     pad_to: usize,
     skip: usize,
     installed_cache: &mut HashSet<usize>,
-    uninstalled_cache: &mut HashSet<usize>,
+    cached_pages: &mut HashSet<usize>,
 ) -> Vec<Spans<'static>> {
     let index_style = Style::default().fg(Color::Gray);
     let installed_style = Style::default().fg(Color::Green);
@@ -469,16 +466,18 @@ fn format_results(
             .take(height - 5)
             .collect(),
     );
-    is_installed(lines.clone(), skip, installed_cache, uninstalled_cache);
+    is_installed(lines.clone(), skip, installed_cache, cached_pages);
 
+    let skip = skip + 1;
     lines
         .iter()
         .enumerate()
         .map(|(i, line)| {
-            let index_string = (i + skip + 1).to_string();
+            let index = i + skip;
+            let index_string = index.to_string();
             Spans::from(vec![
                 Span::styled(index_string.clone(), index_style),
-                Span::raw(" ".repeat(pad_to - index_string.len() + 1)),
+                Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
                 Span::styled(
                     line.clone(),
                     if installed_cache.contains(&(i + skip)) {
@@ -492,36 +491,27 @@ fn format_results(
         .collect()
 }
 
-fn get_info(query: String, index: usize, installed_cache: &HashSet<usize>) -> Vec<Spans<'static>> {
+fn get_info(query: &String, index: usize, installed_cache: &HashSet<usize>) -> Vec<Spans<'static>> {
     let mut cmd = std::process::Command::new("paru");
-    let mut info = Vec::new();
-    let stdout = if installed_cache.contains(&index) {
-        cmd.arg("-Qi").arg(query);
-        let output = cmd.output().unwrap();
 
-        info.push(Spans::from(Span::styled(
-            "Press ENTER again to reinstall this package",
-            Style::default().fg(Color::Green),
-        )));
+    let mut info = vec![Spans::from(Span::styled(
+        "Press ENTER again to install this package",
+        Style::default().fg(Color::Green),
+    ))];
+
+    if installed_cache.contains(&index) {
         info.push(Spans::from(Span::styled(
             "Press Shift-R to uninstall this package".to_owned(),
             Style::default().fg(Color::Red),
         )));
-
-        String::from_utf8(output.stdout).unwrap()
+        cmd.arg("-Qi").arg(query);
     } else {
         cmd.arg("-Si").arg(query);
-        let output = cmd.output().unwrap();
-
-        info.push(Spans::from(Span::styled(
-            "Press ENTER again to install this package",
-            Style::default().fg(Color::Green),
-        )));
-
-        String::from_utf8(output.stdout).unwrap()
     };
-
     info.push(Spans::from(Span::raw("")));
+
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
 
     for line in stdout.lines().map(|c| c.to_owned()) {
         info.push(Spans::from(Span::raw(line)));
@@ -534,8 +524,12 @@ fn is_installed(
     queries: Rc<Vec<String>>,
     skip: usize,
     installed_cache: &mut HashSet<usize>,
-    uninstalled_cache: &mut HashSet<usize>,
+    cached_pages: &mut HashSet<usize>,
 ) {
+    if cached_pages.contains(&skip) {
+        return;
+    }
+
     let mut cmd = std::process::Command::new("paru");
     cmd.arg("-Qq");
     cmd.args(queries.clone().as_slice());
@@ -545,14 +539,10 @@ fn is_installed(
     let mut index;
     for (i, query) in queries.deref().into_iter().enumerate() {
         index = i + skip;
-        if installed_cache.contains(&index) || uninstalled_cache.contains(&index) {
-            continue;
-        }
         let is_installed = output.includes(&(query.to_owned() + "\n"));
         if is_installed {
             installed_cache.insert(index);
-        } else {
-            uninstalled_cache.insert(index);
         }
     }
+    cached_pages.insert(skip);
 }
