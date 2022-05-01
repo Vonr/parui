@@ -5,9 +5,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::{borrow::Cow, os::unix::prelude::CommandExt};
 
-use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
-};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers, MouseEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -31,7 +29,7 @@ enum Mode {
 fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -180,11 +178,7 @@ fn main() -> Result<(), io::Error> {
                         'c' => {
                             if k.modifiers == KeyModifiers::CONTROL {
                                 disable_raw_mode()?;
-                                execute!(
-                                    terminal.backend_mut(),
-                                    LeaveAlternateScreen,
-                                    DisableMouseCapture
-                                )?;
+                                execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
                                 terminal.clear()?;
                                 terminal.set_cursor(0, 0)?;
 
@@ -320,11 +314,7 @@ fn main() -> Result<(), io::Error> {
                         }
                         'q' => {
                             disable_raw_mode()?;
-                            execute!(
-                                terminal.backend_mut(),
-                                LeaveAlternateScreen,
-                                DisableMouseCapture
-                            )?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
                             terminal.clear()?;
                             terminal.set_cursor(0, 0)?;
 
@@ -337,11 +327,7 @@ fn main() -> Result<(), io::Error> {
                         'c' => {
                             if k.modifiers == KeyModifiers::CONTROL {
                                 disable_raw_mode()?;
-                                execute!(
-                                    terminal.backend_mut(),
-                                    LeaveAlternateScreen,
-                                    DisableMouseCapture
-                                )?;
+                                execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
                                 terminal.clear()?;
                                 terminal.set_cursor(0, 0)?;
 
@@ -360,11 +346,7 @@ fn main() -> Result<(), io::Error> {
                         }
                         'R' => {
                             disable_raw_mode()?;
-                            execute!(
-                                terminal.backend_mut(),
-                                LeaveAlternateScreen,
-                                DisableMouseCapture
-                            )?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
 
                             terminal.clear()?;
                             terminal.set_cursor(0, 0)?;
@@ -388,11 +370,7 @@ fn main() -> Result<(), io::Error> {
                             redraw = true;
                         } else {
                             disable_raw_mode()?;
-                            execute!(
-                                terminal.backend_mut(),
-                                LeaveAlternateScreen,
-                                DisableMouseCapture
-                            )?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
 
                             terminal.clear()?;
                             terminal.set_cursor(0, 0)?;
