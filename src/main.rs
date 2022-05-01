@@ -111,7 +111,10 @@ fn main() -> Result<(), io::Error> {
                     let no_results = Paragraph::new("No results, try searching for something else")
                         .block(
                             Block::default()
-                                .title("No Results")
+                                .title(Span::styled(
+                                    "No Results",
+                                    Style::default().add_modifier(Modifier::BOLD),
+                                ))
                                 .title_alignment(Alignment::Center)
                                 .borders(Borders::ALL)
                                 .border_type(BorderType::Rounded),

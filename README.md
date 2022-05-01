@@ -3,9 +3,6 @@
 
 ### Simple TUI frontend for [paru](https://github.com/morganamilo/paru).
 
-### Images
-![parui searching for paru](images/1.png)
-
 ### Keybinds
 
 parui adopts vim-like keybinds.
@@ -25,3 +22,10 @@ parui adopts vim-like keybinds.
 | <C-j>, \<C-Down\>  | Select | Moves info one row down |
 | <C-k>, \<C-Up\>    | Select | Moves info one row up   |
 | q                  | Select | Exits parui             |
+
+### Images
+![Start Screen](images/start_screen.png)
+![Search](images/search.png)
+![Info](images/info.png)
+![Info Scrolling](images/info_scrolling.png)
+
