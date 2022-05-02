@@ -297,23 +297,6 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Char(c) => match c {
                         'j' => {
                             if k.modifiers == KeyModifiers::CONTROL {
-                                if info_scroll > 0 {
-                                    info_scroll -= 1;
-                                    redraw = true;
-                                }
-                            } else {
-                                if selected > 0 {
-                                    selected -= 1;
-                                    info.borrow_mut().clear();
-                                } else {
-                                    selected = results.borrow().len() as u16 - 1;
-                                    info.borrow_mut().clear();
-                                }
-                                redraw = true;
-                            }
-                        }
-                        'k' => {
-                            if k.modifiers == KeyModifiers::CONTROL {
                                 let info = info.borrow();
                                 if !info.is_empty() {
                                     info_scroll += 1;
@@ -326,6 +309,23 @@ fn main() -> Result<(), io::Error> {
                                     info.borrow_mut().clear();
                                 } else {
                                     selected = 0;
+                                    info.borrow_mut().clear();
+                                }
+                                redraw = true;
+                            }
+                        }
+                        'k' => {
+                            if k.modifiers == KeyModifiers::CONTROL {
+                                if info_scroll > 0 {
+                                    info_scroll -= 1;
+                                    redraw = true;
+                                }
+                            } else {
+                                if selected > 0 {
+                                    selected -= 1;
+                                    info.borrow_mut().clear();
+                                } else {
+                                    selected = results.borrow().len() as u16 - 1;
                                     info.borrow_mut().clear();
                                 }
                                 redraw = true;
