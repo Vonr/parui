@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "parui"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "crossterm",
  "naive_opt",
