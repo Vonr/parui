@@ -1,9 +1,8 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::env::Args;
+use std::os::unix::prelude::CommandExt;
 use std::process::exit;
-use std::rc::Rc;
-use std::{os::unix::prelude::CommandExt};
 use std::{env, io};
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -42,11 +41,11 @@ fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let mut query = String::new();
-    let results: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let results: RefCell<Vec<String>> = RefCell::new(Vec::new());
     let mut mode = Mode::Insert;
     let mut selected = 0;
     let mut info_scroll = 0;
-    let mut info: Rc<RefCell<Vec<Spans>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut info: RefCell<Vec<Spans>> = RefCell::new(Vec::new());
     let mut redraw = true;
 
     let mut installed_cache: HashSet<usize> = HashSet::new();
@@ -110,7 +109,7 @@ fn main() -> Result<(), io::Error> {
                 s.render_widget(para, chunks[0]);
 
                 let para = Paragraph::new(format_results(
-                    results.clone(),
+                    &results,
                     selected,
                     size.height as usize,
                     (results.borrow().len() as f32 + 1f32).log10().ceil() as usize,
@@ -440,12 +439,12 @@ fn main() -> Result<(), io::Error> {
                     },
                     KeyCode::Enter => {
                         if info.borrow().is_empty() {
-                            info = Rc::new(RefCell::new(get_info(
+                            info = RefCell::new(get_info(
                                 &(results.borrow()[selected as usize]),
                                 selected as usize,
                                 &installed_cache,
                                 &command,
-                            )));
+                            ));
                             redraw = true;
                         } else {
                             disable_raw_mode()?;
@@ -477,7 +476,7 @@ fn search(query: &str, command: &str) -> String {
 }
 
 fn format_results(
-    lines: Rc<RefCell<Vec<String>>>,
+    lines: &RefCell<Vec<String>>,
     selected: u16,
     height: usize,
     pad_to: usize,
@@ -504,16 +503,14 @@ fn format_results(
         .fg(Color::Blue)
         .add_modifier(Modifier::BOLD);
 
-    let lines: Rc<Vec<String>> = Rc::new(
-        lines
-            .borrow()
-            .iter()
-            .skip(skip)
-            .take(height - 5)
-            .cloned()
-            .collect(),
-    );
-    is_installed(lines.clone(), skip, installed_cache, cached_pages, command);
+    let lines: Vec<String> = lines
+        .borrow()
+        .iter()
+        .skip(skip)
+        .take(height - 5)
+        .cloned()
+        .collect();
+    is_installed(&lines, skip, installed_cache, cached_pages, command);
 
     let skip = skip + 1;
     lines
@@ -592,7 +589,7 @@ fn get_info(
 }
 
 fn is_installed(
-    queries: Rc<Vec<String>>,
+    queries: &[String],
     skip: usize,
     installed_cache: &mut HashSet<usize>,
     cached_pages: &mut HashSet<usize>,
@@ -604,7 +601,7 @@ fn is_installed(
 
     let mut cmd = std::process::Command::new(command);
     cmd.arg("-Qq");
-    cmd.args(queries.as_slice());
+    cmd.args(queries);
 
     let output = cmd.output().unwrap().stdout;
     let output = String::from_utf8(output).unwrap();
