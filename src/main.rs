@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::env::Args;
 use std::os::unix::prelude::CommandExt;
@@ -41,11 +40,11 @@ fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let mut query = String::new();
-    let results: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    let mut results: Vec<String> = Vec::new();
     let mut mode = Mode::Insert;
     let mut selected = 0;
     let mut info_scroll = 0;
-    let mut info: RefCell<Vec<Spans>> = RefCell::new(Vec::new());
+    let mut info: Vec<Spans> = Vec::new();
     let mut redraw = true;
 
     let mut installed_cache: HashSet<usize> = HashSet::new();
@@ -56,9 +55,8 @@ fn main() -> Result<(), io::Error> {
         query = args.query.unwrap();
         let packages = search(&query, &command);
 
-        let mut res_handle = results.borrow_mut();
         for line in packages.lines() {
-            res_handle.push(line.to_owned());
+            results.push(line.to_owned());
         }
 
         mode = Mode::Select;
@@ -112,7 +110,7 @@ fn main() -> Result<(), io::Error> {
                     &results,
                     selected,
                     size.height as usize,
-                    (results.borrow().len() as f32 + 1f32).log10().ceil() as usize,
+                    (results.len() as f32 + 1f32).log10().ceil() as usize,
                     skipped as usize,
                     &mut installed_cache,
                     &mut cached_pages,
@@ -126,7 +124,7 @@ fn main() -> Result<(), io::Error> {
                 .alignment(Alignment::Left);
                 s.render_widget(para, chunks[1]);
 
-                if results.borrow().is_empty() {
+                if results.is_empty() {
                     let area = Rect {
                         x: size.width / 4 + 1,
                         y: size.height / 2 - 2,
@@ -155,7 +153,7 @@ fn main() -> Result<(), io::Error> {
                         width: size.width / 2,
                         height: size.height - 5,
                     };
-                    let info = Paragraph::new(if info.borrow().is_empty() {
+                    let info = Paragraph::new(if info.is_empty() {
                         {
                             let mut actions = vec![Spans::from(Span::styled(
                                 "Press ENTER to show package information",
@@ -172,7 +170,7 @@ fn main() -> Result<(), io::Error> {
                             actions
                         }
                     } else {
-                        info.borrow().iter().skip(info_scroll).cloned().collect()
+                        info.iter().skip(info_scroll).cloned().collect()
                     })
                     .block(
                         Block::default()
@@ -252,17 +250,16 @@ fn main() -> Result<(), io::Error> {
                         }
                     },
                     KeyCode::Enter => {
-                        results.borrow_mut().clear();
+                        results.clear();
                         installed_cache.clear();
                         cached_pages.clear();
-                        info.borrow_mut().clear();
+                        info.clear();
                         selected = 0;
                         terminal.set_cursor(1, 4)?;
                         let packages = search(&query, &command);
 
-                        let mut res_handle = results.borrow_mut();
                         for line in packages.lines() {
-                            res_handle.push(line.to_owned());
+                            results.push(line.to_owned());
                         }
 
                         redraw = true;
@@ -280,29 +277,28 @@ fn main() -> Result<(), io::Error> {
                         } else {
                             if selected > 0 {
                                 selected -= 1;
-                                info.borrow_mut().clear();
+                                info.clear();
                             } else {
-                                selected = results.borrow().len() as u16 - 1;
-                                info.borrow_mut().clear();
+                                selected = results.len() as u16 - 1;
+                                info.clear();
                             }
                             redraw = true;
                         }
                     }
                     KeyCode::Down => {
                         if k.modifiers == KeyModifiers::CONTROL {
-                            let info = info.borrow();
                             if !info.is_empty() {
                                 info_scroll += 1;
                                 redraw = true;
                             }
                         } else {
-                            let result_count = results.borrow().len();
+                            let result_count = results.len();
                             if result_count > 1 && selected < result_count as u16 - 1 {
                                 selected += 1;
-                                info.borrow_mut().clear();
+                                info.clear();
                             } else {
                                 selected = 0;
-                                info.borrow_mut().clear();
+                                info.clear();
                             }
                             redraw = true;
                         }
@@ -310,9 +306,9 @@ fn main() -> Result<(), io::Error> {
                     KeyCode::Left => {
                         let per_page = size.height - 5;
 
-                        if selected >= per_page && results.borrow().len() > per_page as usize {
+                        if selected >= per_page && results.len() > per_page as usize {
                             selected -= per_page;
-                            info.borrow_mut().clear();
+                            info.clear();
                             redraw = true;
                         }
                     }
@@ -320,30 +316,29 @@ fn main() -> Result<(), io::Error> {
                         let size = terminal.size().unwrap();
                         let per_page = size.height - 5;
 
-                        if selected < results.borrow().len() as u16 - per_page
-                            && results.borrow().len() > per_page as usize
+                        if selected < results.len() as u16 - per_page
+                            && results.len() > per_page as usize
                         {
                             selected += per_page;
-                            info.borrow_mut().clear();
+                            info.clear();
                             redraw = true;
                         }
                     }
                     KeyCode::Char(c) => match c {
                         'j' => {
                             if k.modifiers == KeyModifiers::CONTROL {
-                                let info = info.borrow();
                                 if !info.is_empty() {
                                     info_scroll += 1;
                                     redraw = true;
                                 }
                             } else {
-                                let result_count = results.borrow().len();
+                                let result_count = results.len();
                                 if result_count > 1 && selected < result_count as u16 - 1 {
                                     selected += 1;
-                                    info.borrow_mut().clear();
+                                    info.clear();
                                 } else {
                                     selected = 0;
-                                    info.borrow_mut().clear();
+                                    info.clear();
                                 }
                                 redraw = true;
                             }
@@ -357,10 +352,10 @@ fn main() -> Result<(), io::Error> {
                             } else {
                                 if selected > 0 {
                                     selected -= 1;
-                                    info.borrow_mut().clear();
+                                    info.clear();
                                 } else {
-                                    selected = results.borrow().len() as u16 - 1;
-                                    info.borrow_mut().clear();
+                                    selected = results.len() as u16 - 1;
+                                    info.clear();
                                 }
                                 redraw = true;
                             }
@@ -369,9 +364,9 @@ fn main() -> Result<(), io::Error> {
                             let size = terminal.size().unwrap();
                             let per_page = size.height - 5;
 
-                            if selected >= per_page && results.borrow().len() > per_page as usize {
+                            if selected >= per_page && results.len() > per_page as usize {
                                 selected -= per_page;
-                                info.borrow_mut().clear();
+                                info.clear();
                                 redraw = true;
                             }
                         }
@@ -379,11 +374,11 @@ fn main() -> Result<(), io::Error> {
                             let size = terminal.size().unwrap();
                             let per_page = size.height - 5;
 
-                            if selected < results.borrow().len() as u16 - per_page
-                                && results.borrow().len() > per_page as usize
+                            if selected < results.len() as u16 - per_page
+                                && results.len() > per_page as usize
                             {
                                 selected += per_page;
-                                info.borrow_mut().clear();
+                                info.clear();
                                 redraw = true;
                             }
                         }
@@ -416,7 +411,7 @@ fn main() -> Result<(), io::Error> {
                             redraw = true;
                         }
                         'G' => {
-                            selected = results.borrow().len() as u16 - 1;
+                            selected = results.len() as u16 - 1;
                             redraw = true;
                         }
                         'R' => {
@@ -428,7 +423,7 @@ fn main() -> Result<(), io::Error> {
                                 terminal.set_cursor(0, 0)?;
                                 terminal.show_cursor()?;
                                 let mut cmd = std::process::Command::new(command);
-                                cmd.arg("-R").arg(&(results.borrow()[selected as usize]));
+                                cmd.arg("-R").arg(&(results[selected as usize]));
                                 cmd.exec();
 
                                 return Ok(());
@@ -438,13 +433,13 @@ fn main() -> Result<(), io::Error> {
                         _ => redraw = true,
                     },
                     KeyCode::Enter => {
-                        if info.borrow().is_empty() {
-                            info = RefCell::new(get_info(
-                                &(results.borrow()[selected as usize]),
+                        if info.is_empty() {
+                            info = get_info(
+                                &(results[selected as usize]),
                                 selected as usize,
                                 &installed_cache,
                                 &command,
-                            ));
+                            );
                             redraw = true;
                         } else {
                             disable_raw_mode()?;
@@ -454,7 +449,7 @@ fn main() -> Result<(), io::Error> {
                             terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
                             let mut cmd = std::process::Command::new(command);
-                            cmd.arg("-S").arg(&(results.borrow()[selected as usize]));
+                            cmd.arg("-S").arg(&(results[selected as usize]));
                             cmd.exec();
 
                             return Ok(());
@@ -476,7 +471,7 @@ fn search(query: &str, command: &str) -> String {
 }
 
 fn format_results(
-    lines: &RefCell<Vec<String>>,
+    lines: &[String],
     selected: u16,
     height: usize,
     pad_to: usize,
@@ -503,13 +498,7 @@ fn format_results(
         .fg(Color::Blue)
         .add_modifier(Modifier::BOLD);
 
-    let lines: Vec<String> = lines
-        .borrow()
-        .iter()
-        .skip(skip)
-        .take(height - 5)
-        .cloned()
-        .collect();
+    let lines: Vec<String> = lines.iter().skip(skip).take(height - 5).cloned().collect();
     is_installed(&lines, skip, installed_cache, cached_pages, command);
 
     let skip = skip + 1;
