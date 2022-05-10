@@ -1,8 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::io;
+use std::env::Args;
+use std::process::exit;
 use std::rc::Rc;
 use std::{borrow::Cow, os::unix::prelude::CommandExt};
+use std::{env, io};
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
@@ -25,13 +27,20 @@ enum Mode {
     Select,
 }
 
+struct Config {
+    query: Option<String>,
+    command: String,
+}
+
 fn main() -> Result<(), io::Error> {
+    let args = Config::new(env::args());
+    let command = args.command;
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
     let mut query: Cow<String> = Cow::Owned(String::new());
     let results: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let mut mode = Mode::Insert;
@@ -43,7 +52,22 @@ fn main() -> Result<(), io::Error> {
     let mut installed_cache: HashSet<usize> = HashSet::new();
     let mut cached_pages: HashSet<usize> = HashSet::new();
 
+    if args.query.is_some() {
+        terminal.set_cursor(0, 0)?;
+        query = Cow::Owned(args.query.unwrap());
+        let packages = search(&query, &command);
+
+        let mut res_handle = results.borrow_mut();
+        for line in packages.lines() {
+            res_handle.push(line.to_owned());
+        }
+
+        mode = Mode::Select;
+        terminal.set_cursor(1, 4)?;
+    }
+
     terminal.clear()?;
+
     loop {
         let mut line = selected;
         let mut should_skip = false;
@@ -87,11 +111,13 @@ fn main() -> Result<(), io::Error> {
 
                 let para = Paragraph::new(format_results(
                     results.clone(),
+                    selected,
                     size.height as usize,
                     (results.borrow().len() as f32 + 1f32).log10().ceil() as usize,
                     skipped as usize,
                     &mut installed_cache,
                     &mut cached_pages,
+                    &command,
                 ))
                 .block(
                     Block::default()
@@ -131,12 +157,21 @@ fn main() -> Result<(), io::Error> {
                         height: size.height - 5,
                     };
                     let info = Paragraph::new(if info.borrow().is_empty() {
-                        vec![Spans::from(Span::styled(
-                            "Press ENTER to show package information",
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::BOLD),
-                        ))]
+                        {
+                            let mut actions = vec![Spans::from(Span::styled(
+                                "Press ENTER to show package information",
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::BOLD),
+                            ))];
+                            if installed_cache.contains(&(selected as usize)) {
+                                actions.push(Spans::from(Span::styled(
+                                    "Press Shift-R to uninstall this package".to_owned(),
+                                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                                )));
+                            }
+                            actions
+                        }
                     } else {
                         info.borrow().iter().skip(info_scroll).cloned().collect()
                     })
@@ -224,7 +259,7 @@ fn main() -> Result<(), io::Error> {
                         info.borrow_mut().clear();
                         selected = 0;
                         terminal.set_cursor(1, 4)?;
-                        let packages = search(&query);
+                        let packages = search(&query, &command);
 
                         let mut res_handle = results.borrow_mut();
                         for line in packages.lines() {
@@ -386,17 +421,19 @@ fn main() -> Result<(), io::Error> {
                             redraw = true;
                         }
                         'R' => {
-                            disable_raw_mode()?;
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+                            if installed_cache.contains(&(selected as usize)) {
+                                disable_raw_mode()?;
+                                execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
 
-                            terminal.clear()?;
-                            terminal.set_cursor(0, 0)?;
-                            terminal.show_cursor()?;
-                            let mut cmd = std::process::Command::new("paru");
-                            cmd.arg("-R").arg(&(results.borrow()[selected as usize]));
-                            cmd.exec();
+                                terminal.clear()?;
+                                terminal.set_cursor(0, 0)?;
+                                terminal.show_cursor()?;
+                                let mut cmd = std::process::Command::new(command);
+                                cmd.arg("-R").arg(&(results.borrow()[selected as usize]));
+                                cmd.exec();
 
-                            return Ok(());
+                                return Ok(());
+                            }
                         }
 
                         _ => redraw = true,
@@ -407,6 +444,7 @@ fn main() -> Result<(), io::Error> {
                                 &(results.borrow()[selected as usize]),
                                 selected as usize,
                                 &installed_cache,
+                                &command,
                             )));
                             redraw = true;
                         } else {
@@ -416,7 +454,7 @@ fn main() -> Result<(), io::Error> {
                             terminal.clear()?;
                             terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
-                            let mut cmd = std::process::Command::new("paru");
+                            let mut cmd = std::process::Command::new(command);
                             cmd.arg("-S").arg(&(results.borrow()[selected as usize]));
                             cmd.exec();
 
@@ -431,28 +469,41 @@ fn main() -> Result<(), io::Error> {
     }
 }
 
-fn search(query: &str) -> String {
-    let mut cmd = std::process::Command::new("paru");
-    cmd.arg("--topdown").arg("-Ssq").arg(query);
+fn search(query: &str, command: &str) -> String {
+    let mut cmd = std::process::Command::new(command);
+    cmd.args(["--topdown", "-Ssq", query]);
     let output = cmd.output().unwrap();
     String::from_utf8(output.stdout).unwrap()
 }
 
 fn format_results(
     lines: Rc<RefCell<Vec<String>>>,
+    selected: u16,
     height: usize,
     pad_to: usize,
     skip: usize,
     installed_cache: &mut HashSet<usize>,
     cached_pages: &mut HashSet<usize>,
+    command: &str,
 ) -> Vec<Spans<'static>> {
     let index_style = Style::default().fg(Color::Gray);
     let installed_style = Style::default()
         .fg(Color::Green)
         .add_modifier(Modifier::BOLD);
+    // let installed_selected_style = installed_style.add_modifier(Modifier::UNDERLINED);
+    let installed_selected_style = Style::default()
+        .bg(Color::Red)
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
     let uninstalled_style = Style::default()
         .fg(Color::LightBlue)
         .add_modifier(Modifier::BOLD);
+    // let uninstalled_selected_style = uninstalled_style.add_modifier(Modifier::UNDERLINED);
+    let uninstalled_selected_style = Style::default()
+        .bg(Color::Red)
+        .fg(Color::Blue)
+        .add_modifier(Modifier::BOLD);
+
     let lines: Rc<Vec<String>> = Rc::new(
         lines
             .borrow()
@@ -462,7 +513,7 @@ fn format_results(
             .cloned()
             .collect(),
     );
-    is_installed(lines.clone(), skip, installed_cache, cached_pages);
+    is_installed(lines.clone(), skip, installed_cache, cached_pages, command);
 
     let skip = skip + 1;
     lines
@@ -477,7 +528,13 @@ fn format_results(
                 Span::styled(
                     line.clone(),
                     if installed_cache.contains(&(i + skip - 1)) {
-                        installed_style
+                        if selected == (index - 1) as u16 {
+                            installed_selected_style
+                        } else {
+                            installed_style
+                        }
+                    } else if selected == (index - 1) as u16 {
+                        uninstalled_selected_style
                     } else {
                         uninstalled_style
                     },
@@ -487,8 +544,13 @@ fn format_results(
         .collect()
 }
 
-fn get_info(query: &String, index: usize, installed_cache: &HashSet<usize>) -> Vec<Spans<'static>> {
-    let mut cmd = std::process::Command::new("paru");
+fn get_info(
+    query: &String,
+    index: usize,
+    installed_cache: &HashSet<usize>,
+    command: &str,
+) -> Vec<Spans<'static>> {
+    let mut cmd = std::process::Command::new(command);
 
     let mut info = vec![Spans::from(Span::styled(
         "Press ENTER again to install this package",
@@ -534,12 +596,13 @@ fn is_installed(
     skip: usize,
     installed_cache: &mut HashSet<usize>,
     cached_pages: &mut HashSet<usize>,
+    command: &str,
 ) {
     if cached_pages.contains(&skip) {
         return;
     }
 
-    let mut cmd = std::process::Command::new("paru");
+    let mut cmd = std::process::Command::new(command);
     cmd.arg("-Qq");
     cmd.args(queries.as_slice());
 
@@ -554,4 +617,49 @@ fn is_installed(
         }
     }
     cached_pages.insert(skip);
+}
+
+fn print_help() {
+    println!(concat!(
+        "Usage: parui [OPTION]... QUERY\n",
+        "Search for QUERY in the Arch User Repository.\n",
+        "Example:\n",
+        "    parui -p=yay rustup\n\n",
+        "Options:\n",
+        "    -p=<PROGRAM>\n",
+        "        Selects program used to search AUR\n",
+        "        Not guaranteed to work well\n",
+        "        Default: paru\n",
+        "    -h\n",
+        "        Print this help and exit"
+    ));
+    exit(0);
+}
+
+impl Config {
+    pub fn new(args: Args) -> Self {
+        let mut query: Option<String> = None;
+        let mut command = String::from("paru");
+
+        for arg in args.skip(1) {
+            match arg.as_str() {
+                "-h" | "--help" => print_help(),
+                _ => {
+                    let arg = arg.clone();
+                    if arg.starts_with("-p=") {
+                        let stripped = arg.clone().chars().skip(3).collect::<String>();
+                        command = stripped;
+                        continue;
+                    }
+                    if query.is_some() {
+                        query = Some(query.unwrap() + " " + &arg);
+                    } else {
+                        query = Some(arg.to_owned());
+                    }
+                }
+            }
+        }
+
+        Self { query, command }
+    }
 }
