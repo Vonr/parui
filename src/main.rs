@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use std::env::Args;
 use std::process::exit;
 use std::rc::Rc;
-use std::{borrow::Cow, os::unix::prelude::CommandExt};
+use std::{os::unix::prelude::CommandExt};
 use std::{env, io};
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -41,7 +41,7 @@ fn main() -> Result<(), io::Error> {
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let mut query: Cow<String> = Cow::Owned(String::new());
+    let mut query = String::new();
     let results: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let mut mode = Mode::Insert;
     let mut selected = 0;
@@ -54,7 +54,7 @@ fn main() -> Result<(), io::Error> {
 
     if args.query.is_some() {
         terminal.set_cursor(0, 0)?;
-        query = Cow::Owned(args.query.unwrap());
+        query = args.query.unwrap();
         let packages = search(&query, &command);
 
         let mut res_handle = results.borrow_mut();
@@ -213,7 +213,7 @@ fn main() -> Result<(), io::Error> {
                     }
                     KeyCode::Backspace => {
                         if !query.is_empty() {
-                            query.to_mut().pop();
+                            query.pop();
                         }
                         redraw = true;
                     }
@@ -227,7 +227,7 @@ fn main() -> Result<(), io::Error> {
 
                                 return Ok(());
                             }
-                            query.to_mut().push(c);
+                            query.push(c);
                             redraw = true;
                         }
                         'w' => {
@@ -240,15 +240,15 @@ fn main() -> Result<(), io::Error> {
                                     }
                                 }
                                 let chars = chars.rev().collect::<String>();
-                                query = Cow::Owned(chars);
+                                query = chars;
                                 redraw = true;
                             } else {
-                                query.to_mut().push(c);
+                                query.push(c);
                                 redraw = true;
                             }
                         }
                         _ => {
-                            query.to_mut().push(c);
+                            query.push(c);
                             redraw = true;
                         }
                     },
@@ -409,7 +409,7 @@ fn main() -> Result<(), io::Error> {
 
                                 return Ok(());
                             }
-                            query.to_mut().push(c);
+                            query.push(c);
                             redraw = true;
                         }
                         'g' => {
