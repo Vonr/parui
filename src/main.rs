@@ -484,7 +484,6 @@ fn format_results(
     let installed_style = Style::default()
         .fg(Color::Green)
         .add_modifier(Modifier::BOLD);
-    // let installed_selected_style = installed_style.add_modifier(Modifier::UNDERLINED);
     let installed_selected_style = Style::default()
         .bg(Color::Red)
         .fg(Color::Yellow)
@@ -492,7 +491,6 @@ fn format_results(
     let uninstalled_style = Style::default()
         .fg(Color::LightBlue)
         .add_modifier(Modifier::BOLD);
-    // let uninstalled_selected_style = uninstalled_style.add_modifier(Modifier::UNDERLINED);
     let uninstalled_selected_style = Style::default()
         .bg(Color::Red)
         .fg(Color::Blue)
