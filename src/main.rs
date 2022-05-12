@@ -46,6 +46,7 @@ fn main() -> Result<(), io::Error> {
     let mut info_scroll = 0;
     let mut info: Vec<Spans> = Vec::new();
     let mut redraw = true;
+    let mut insert_pos = 0;
 
     let mut installed_cache: HashSet<usize> = HashSet::new();
     let mut cached_pages: HashSet<usize> = HashSet::new();
@@ -191,11 +192,11 @@ fn main() -> Result<(), io::Error> {
 
         match mode {
             Mode::Insert => {
-                terminal.set_cursor(query.len() as u16 + 9, 1)?;
+                terminal.set_cursor(insert_pos + 9, 1)?;
             }
             Mode::Select => {
                 terminal.set_cursor(1, line + 4)?;
-            }
+            } // _ => (),
         }
 
         terminal.show_cursor()?;
@@ -208,11 +209,25 @@ fn main() -> Result<(), io::Error> {
                         redraw = true;
                         mode = Mode::Select;
                     }
-                    KeyCode::Backspace => {
-                        if !query.is_empty() {
-                            query.pop();
+                    KeyCode::Left => {
+                        if insert_pos > 0 {
+                            insert_pos -= 1;
+                            terminal.set_cursor(insert_pos + 9, 1)?;
+                            redraw = true;
                         }
-                        redraw = true;
+                    }
+                    KeyCode::Right => {
+                        if (insert_pos as usize) < query.len() {
+                            insert_pos += 1;
+                            redraw = true;
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        if insert_pos != 0 {
+                            query.remove(insert_pos as usize - 1);
+                            insert_pos -= 1;
+                            redraw = true;
+                        }
                     }
                     KeyCode::Char(c) => match c {
                         'c' => {
@@ -224,28 +239,34 @@ fn main() -> Result<(), io::Error> {
 
                                 return Ok(());
                             }
-                            query.push(c);
+                            query.insert(insert_pos as usize, c);
+                            insert_pos += 1;
                             redraw = true;
                         }
                         'w' => {
                             if k.modifiers == KeyModifiers::CONTROL {
-                                let mut chars = query.chars().rev();
-                                for c in chars.by_ref() {
-                                    match c {
-                                        ' ' | '-' | '_' => break,
+                                let chars = query.as_bytes();
+                                let mut boundary = 0;
+                                for (i, c) in chars.iter().take(insert_pos as usize).enumerate() {
+                                    match *c as char {
+                                        ' ' | '-' | '_' => {
+                                            boundary = i;
+                                        }
                                         _ => (),
                                     }
                                 }
-                                let chars = chars.rev().collect::<String>();
-                                query = chars;
-                                redraw = true;
+                                query =
+                                    query[..boundary].to_string() + &query[insert_pos as usize..];
+                                insert_pos = boundary as u16;
                             } else {
-                                query.push(c);
-                                redraw = true;
+                                query.insert(insert_pos as usize, c);
+                                insert_pos += 1;
                             }
+                            redraw = true;
                         }
                         _ => {
-                            query.push(c);
+                            query.insert(insert_pos as usize, c);
+                            insert_pos += 1;
                             redraw = true;
                         }
                     },
@@ -391,6 +412,7 @@ fn main() -> Result<(), io::Error> {
                             return Ok(());
                         }
                         'i' => {
+                            insert_pos = query.len() as u16;
                             redraw = true;
                             mode = Mode::Insert;
                         }
