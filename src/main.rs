@@ -449,7 +449,7 @@ fn main() -> Result<(), io::Error> {
                             terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
                             let mut cmd = std::process::Command::new(command);
-                            cmd.arg("-S").arg(&(results[selected as usize]));
+                            cmd.args(["--rebuild", "-S", &(results[selected as usize])]);
                             cmd.exec();
 
                             return Ok(());
@@ -537,7 +537,7 @@ fn get_info(
     let mut cmd = std::process::Command::new(command);
 
     let mut info = vec![Spans::from(Span::styled(
-        "Press ENTER again to install this package",
+        "Press ENTER again to (re)install this package",
         Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
