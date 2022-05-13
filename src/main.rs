@@ -64,7 +64,7 @@ fn main() -> Result<(), io::Error> {
         if !results.is_empty() {
             mode = Mode::Select;
         } else {
-            error_msg = "No results, try searching for something else";
+            error_msg = "No or too many results, try searching for something else";
         }
         terminal.set_cursor(2, 4)?;
     }
@@ -339,10 +339,11 @@ fn main() -> Result<(), io::Error> {
                             if !results.is_empty() {
                                 mode = Mode::Select;
                             } else {
-                                error_msg = "No results found, try searching for something else";
+                                error_msg =
+                                    "No or too many results, try searching for something else";
                             }
                         } else {
-                            error_msg = "Query should be at least 3 characters long";
+                            error_msg = "Query should be at least 2 characters long";
                         }
                     }
                     _ => redraw = true,
