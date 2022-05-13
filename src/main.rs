@@ -50,6 +50,7 @@ fn main() -> Result<(), io::Error> {
 
     let mut installed_cache: HashSet<usize> = HashSet::new();
     let mut cached_pages: HashSet<usize> = HashSet::new();
+    let mut error_msg = "Try searching for something";
 
     if args.query.is_some() {
         terminal.set_cursor(0, 0)?;
@@ -60,8 +61,12 @@ fn main() -> Result<(), io::Error> {
             results.push(line.to_owned());
         }
 
-        mode = Mode::Select;
-        terminal.set_cursor(1, 4)?;
+        if !results.is_empty() {
+            mode = Mode::Select;
+        } else {
+            error_msg = "No results, try searching for something else";
+        }
+        terminal.set_cursor(2, 4)?;
     }
 
     terminal.clear()?;
@@ -90,17 +95,31 @@ fn main() -> Result<(), io::Error> {
                     .constraints([Constraint::Min(3), Constraint::Percentage(100)].as_ref())
                     .split(size);
 
+                let search_color;
+                let results_color;
+                if let Mode::Insert = mode {
+                    search_color = Color::White;
+                    results_color = Color::Gray;
+                } else {
+                    search_color = Color::Gray;
+                    results_color = Color::White;
+                };
+                let bold_search_style = if let Mode::Insert = mode {
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .fg(search_color)
+                } else {
+                    Style::default().fg(search_color)
+                };
                 let para = Paragraph::new(Spans::from(vec![
-                    Span::styled("Search: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(&*query),
+                    Span::styled(" Search: ", bold_search_style),
+                    Span::styled(&*query, Style::default().fg(search_color)),
                 ]))
                 .block(
                     Block::default()
-                        .title(Span::styled(
-                            "parui",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ))
+                        .title(Span::styled(" parui ", bold_search_style))
                         .title_alignment(Alignment::Center)
+                        .border_style(Style::default().fg(search_color))
                         .borders(Borders::ALL)
                         .border_type(BorderType::Rounded),
                 )
@@ -120,6 +139,7 @@ fn main() -> Result<(), io::Error> {
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
+                        .border_style(Style::default().fg(results_color))
                         .border_type(BorderType::Rounded),
                 )
                 .alignment(Alignment::Left);
@@ -132,11 +152,11 @@ fn main() -> Result<(), io::Error> {
                         width: size.width / 2,
                         height: 4,
                     };
-                    let no_results = Paragraph::new("No results, try searching for something else")
+                    let no_results = Paragraph::new(error_msg)
                         .block(
                             Block::default()
                                 .title(Span::styled(
-                                    "No Results",
+                                    " No Results ",
                                     Style::default().add_modifier(Modifier::BOLD),
                                 ))
                                 .title_alignment(Alignment::Center)
@@ -154,33 +174,67 @@ fn main() -> Result<(), io::Error> {
                         width: size.width / 2,
                         height: size.height - 5,
                     };
-                    let info = Paragraph::new(if info.is_empty() {
-                        {
-                            let mut actions = vec![Spans::from(Span::styled(
-                                "Press ENTER to show package information",
+                    let border = Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(results_color))
+                        .border_type(BorderType::Rounded);
+                    s.render_widget(Clear, area);
+                    s.render_widget(border, area);
+                    let area = Rect {
+                        x: size.width / 2 + 2,
+                        y: 5,
+                        width: size.width / 2 - 4,
+                        height: 3,
+                    };
+                    let actions = Paragraph::new({
+                        let mut actions = Vec::new();
+                        if info.is_empty() {
+                            actions.push(Spans::from(Span::styled(
+                                "Press ENTER to show package information".to_owned(),
                                 Style::default()
                                     .fg(Color::Green)
                                     .add_modifier(Modifier::BOLD),
-                            ))];
+                            )));
                             if installed_cache.contains(&(selected as usize)) {
                                 actions.push(Spans::from(Span::styled(
                                     "Press Shift-R to uninstall this package".to_owned(),
                                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                                 )));
                             }
-                            actions
+                        } else if installed_cache.contains(&(selected as usize)) {
+                            actions.push(Spans::from(Span::styled(
+                                "Press ENTER again to reinstall this package",
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::BOLD),
+                            )));
+                            actions.push(Spans::from(Span::styled(
+                                "Press Shift-R to uninstall this package".to_owned(),
+                                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                            )));
+                        } else {
+                            actions.push(Spans::from(Span::styled(
+                                "Press ENTER again to install this package",
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::BOLD),
+                            )));
                         }
-                    } else {
-                        info.iter().skip(info_scroll).cloned().collect()
+                        actions
                     })
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_type(BorderType::Rounded),
-                    )
-                    .wrap(Wrap { trim: true })
                     .alignment(Alignment::Left);
-                    s.render_widget(Clear, area);
+                    s.render_widget(actions, area);
+
+                    let area = Rect {
+                        x: size.width / 2 + 2,
+                        y: 8,
+                        width: size.width / 2 - 4,
+                        height: size.height - 10,
+                    };
+
+                    let info = Paragraph::new(info.to_vec())
+                        .wrap(Wrap { trim: true })
+                        .scroll((info_scroll as u16, 0));
                     s.render_widget(info, area);
                 }
             })?;
@@ -192,11 +246,11 @@ fn main() -> Result<(), io::Error> {
 
         match mode {
             Mode::Insert => {
-                terminal.set_cursor(insert_pos + 9, 1)?;
+                terminal.set_cursor(insert_pos + 10, 1)?;
             }
             Mode::Select => {
-                terminal.set_cursor(1, line + 4)?;
-            } // _ => (),
+                terminal.set_cursor(2, line + 4)?;
+            }
         }
 
         terminal.show_cursor()?;
@@ -205,14 +259,15 @@ fn main() -> Result<(), io::Error> {
             Event::Key(k) => match mode {
                 Mode::Insert => match k.code {
                     KeyCode::Esc => {
-                        selected = 0;
-                        redraw = true;
-                        mode = Mode::Select;
+                        if !results.is_empty() {
+                            selected = 0;
+                            redraw = true;
+                            mode = Mode::Select;
+                        }
                     }
                     KeyCode::Left => {
                         if insert_pos > 0 {
                             insert_pos -= 1;
-                            terminal.set_cursor(insert_pos + 9, 1)?;
                             redraw = true;
                         }
                     }
@@ -276,15 +331,21 @@ fn main() -> Result<(), io::Error> {
                         cached_pages.clear();
                         info.clear();
                         selected = 0;
-                        terminal.set_cursor(1, 4)?;
-                        let packages = search(&query, &command);
-
-                        for line in packages.lines() {
-                            results.push(line.to_owned());
-                        }
-
                         redraw = true;
-                        mode = Mode::Select;
+                        if query.as_bytes().len() > 1 {
+                            terminal.set_cursor(2, 4)?;
+                            let packages = search(&query, &command);
+
+                            results = packages.lines().map(|s| s.to_owned()).collect();
+
+                            if !results.is_empty() {
+                                mode = Mode::Select;
+                            } else {
+                                error_msg = "No results found, try searching for something else";
+                            }
+                        } else {
+                            error_msg = "Query should be at least 3 characters long";
+                        }
                     }
                     _ => redraw = true,
                 },
@@ -527,7 +588,7 @@ fn format_results(
         .enumerate()
         .map(|(i, line)| {
             let index = i + skip;
-            let index_string = index.to_string();
+            let index_string = " ".to_string() + &index.to_string();
             Spans::from(vec![
                 Span::styled(index_string, index_style),
                 Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
@@ -558,27 +619,16 @@ fn get_info(
 ) -> Vec<Spans<'static>> {
     let mut cmd = std::process::Command::new(command);
 
-    let mut info = vec![Spans::from(Span::styled(
-        "Press ENTER again to (re)install this package",
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD),
-    ))];
-
     if installed_cache.contains(&index) {
-        info.push(Spans::from(Span::styled(
-            "Press Shift-R to uninstall this package".to_owned(),
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        )));
         cmd.arg("-Qi").arg(query);
     } else {
         cmd.arg("-Si").arg(query);
     };
-    info.push(Spans::default());
 
     let output = cmd.output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
 
+    let mut info = Vec::with_capacity(stdout.lines().count());
     for line in stdout.lines().map(|c| c.to_owned()) {
         if line.contains(':') {
             let (key, value) = line.split_once(':').unwrap();
