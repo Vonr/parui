@@ -245,13 +245,13 @@ fn main() -> Result<(), io::Error> {
         match mode {
             Mode::Insert => {
                 terminal.set_cursor(insert_pos + 10, 1)?;
+                terminal.show_cursor()?;
             }
             Mode::Select => {
                 terminal.set_cursor(2, line + 4)?;
+                terminal.hide_cursor()?;
             }
         }
-
-        terminal.show_cursor()?;
 
         match event::read()? {
             Event::Key(k) => match mode {
