@@ -1,7 +1,7 @@
 # parui
 [![Crates.io](https://img.shields.io/crates/v/parui)](https://crates.io/crates/parui)
 
-### Simple TUI frontend for [paru](https://github.com/morganamilo/paru).
+### Simple TUI frontend for [paru](https://github.com/morganamilo/paru) or [yay](https://github.com/Jguer/yay).
 
 ### Usage
 
