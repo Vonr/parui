@@ -73,15 +73,14 @@ fn main() -> Result<(), io::Error> {
 
     loop {
         let mut line = selected;
-        let mut should_skip = false;
 
         let size = terminal.size();
         if size.is_err() {
             continue;
         }
         let size = size.unwrap();
-        if size.height <= 5 {
-            should_skip = true;
+        if size.height <= 10 {
+            continue;
         }
 
         let page = selected / (size.height - 5);
@@ -171,7 +170,7 @@ fn main() -> Result<(), io::Error> {
                     let area = Rect {
                         x: size.width / 2,
                         y: 4,
-                        width: size.width / 2,
+                        width: size.width / 2 - 1,
                         height: size.height - 5,
                     };
                     let border = Block::default()
@@ -186,7 +185,7 @@ fn main() -> Result<(), io::Error> {
                     let area = Rect {
                         x: size.width / 2 + 2,
                         y: 5,
-                        width: size.width / 2 - 4,
+                        width: size.width / 2 - 5,
                         height: 1 + (no_info || is_installed) as u16,
                     };
                     let actions = Paragraph::new({
@@ -231,7 +230,7 @@ fn main() -> Result<(), io::Error> {
                     let area = Rect {
                         x: size.width / 2 + 2,
                         y: 7 + (no_info || is_installed) as u16,
-                        width: size.width / 2 - 4,
+                        width: size.width / 2 - 5,
                         height: size.height - 9 - (no_info || is_installed) as u16,
                     };
 
@@ -241,10 +240,6 @@ fn main() -> Result<(), io::Error> {
                     s.render_widget(info, area);
                 }
             })?;
-        }
-
-        if should_skip {
-            continue;
         }
 
         match mode {
