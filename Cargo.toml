@@ -1,6 +1,6 @@
 [package]
 name = "parui"
-description = "Simple TUI frontend for paru."
+description = "Simple TUI frontend for paru or yay."
 version = "0.1.16"
 edition = "2021"
 license = "MIT"
