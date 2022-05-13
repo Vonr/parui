@@ -180,15 +180,18 @@ fn main() -> Result<(), io::Error> {
                         .border_type(BorderType::Rounded);
                     s.render_widget(Clear, area);
                     s.render_widget(border, area);
+
+                    let no_info = info.is_empty();
+                    let is_installed = installed_cache.contains(&(selected as usize));
                     let area = Rect {
                         x: size.width / 2 + 2,
                         y: 5,
                         width: size.width / 2 - 4,
-                        height: 3,
+                        height: 1 + (no_info || is_installed) as u16,
                     };
                     let actions = Paragraph::new({
                         let mut actions = Vec::new();
-                        if info.is_empty() {
+                        if no_info {
                             actions.push(Spans::from(Span::styled(
                                 "Press ENTER to show package information".to_owned(),
                                 Style::default()
@@ -201,7 +204,7 @@ fn main() -> Result<(), io::Error> {
                                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                                 )));
                             }
-                        } else if installed_cache.contains(&(selected as usize)) {
+                        } else if is_installed {
                             actions.push(Spans::from(Span::styled(
                                 "Press ENTER again to reinstall this package",
                                 Style::default()
@@ -227,9 +230,9 @@ fn main() -> Result<(), io::Error> {
 
                     let area = Rect {
                         x: size.width / 2 + 2,
-                        y: 8,
+                        y: 7 + (no_info || is_installed) as u16,
                         width: size.width / 2 - 4,
-                        height: size.height - 10,
+                        height: size.height - 9 - (no_info || is_installed) as u16,
                     };
 
                     let info = Paragraph::new(info.to_vec())
