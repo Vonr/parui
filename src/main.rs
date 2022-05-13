@@ -42,7 +42,7 @@ fn main() -> Result<(), io::Error> {
     let mut query = String::new();
     let mut results: Vec<String> = Vec::new();
     let mut mode = Mode::Insert;
-    let mut selected = 0;
+    let mut selected: usize = 0;
     let mut info_scroll = 0;
     let mut info: Vec<Spans> = Vec::new();
     let mut redraw = true;
@@ -83,8 +83,8 @@ fn main() -> Result<(), io::Error> {
             continue;
         }
 
-        let page = selected / (size.height - 5);
-        let skipped = page * (size.height - 5);
+        let page = selected / (size.height - 5) as usize;
+        let skipped = page * (size.height - 5) as usize;
         line -= skipped;
 
         if redraw {
@@ -248,7 +248,7 @@ fn main() -> Result<(), io::Error> {
                 terminal.show_cursor()?;
             }
             Mode::Select => {
-                terminal.set_cursor(2, line + 4)?;
+                terminal.set_cursor(2, line as u16 + 4)?;
                 terminal.hide_cursor()?;
             }
         }
@@ -359,7 +359,7 @@ fn main() -> Result<(), io::Error> {
                                 selected -= 1;
                                 info.clear();
                             } else {
-                                selected = results.len() as u16 - 1;
+                                selected = results.len() - 1;
                                 info.clear();
                             }
                             redraw = true;
@@ -373,7 +373,7 @@ fn main() -> Result<(), io::Error> {
                             }
                         } else {
                             let result_count = results.len();
-                            if result_count > 1 && selected < result_count as u16 - 1 {
+                            if result_count > 1 && selected < result_count - 1 {
                                 selected += 1;
                                 info.clear();
                             } else {
@@ -384,7 +384,7 @@ fn main() -> Result<(), io::Error> {
                         }
                     }
                     KeyCode::Left => {
-                        let per_page = size.height - 5;
+                        let per_page = (size.height - 5) as usize;
 
                         if selected >= per_page && results.len() > per_page as usize {
                             selected -= per_page;
@@ -394,10 +394,9 @@ fn main() -> Result<(), io::Error> {
                     }
                     KeyCode::Right => {
                         let size = terminal.size().unwrap();
-                        let per_page = size.height - 5;
+                        let per_page = (size.height - 5) as usize;
 
-                        if selected < results.len() as u16 - per_page
-                            && results.len() > per_page as usize
+                        if selected < results.len() - per_page && results.len() > per_page as usize
                         {
                             selected += per_page;
                             info.clear();
@@ -413,7 +412,7 @@ fn main() -> Result<(), io::Error> {
                                 }
                             } else {
                                 let result_count = results.len();
-                                if result_count > 1 && selected < result_count as u16 - 1 {
+                                if result_count > 1 && selected < result_count - 1 {
                                     selected += 1;
                                     info.clear();
                                 } else {
@@ -434,7 +433,7 @@ fn main() -> Result<(), io::Error> {
                                     selected -= 1;
                                     info.clear();
                                 } else {
-                                    selected = results.len() as u16 - 1;
+                                    selected = results.len() - 1;
                                     info.clear();
                                 }
                                 redraw = true;
@@ -442,9 +441,9 @@ fn main() -> Result<(), io::Error> {
                         }
                         'h' => {
                             let size = terminal.size().unwrap();
-                            let per_page = size.height - 5;
+                            let per_page = (size.height - 5) as usize;
 
-                            if selected >= per_page && results.len() > per_page as usize {
+                            if selected >= per_page && results.len() > per_page {
                                 selected -= per_page;
                                 info.clear();
                                 redraw = true;
@@ -452,9 +451,9 @@ fn main() -> Result<(), io::Error> {
                         }
                         'l' => {
                             let size = terminal.size().unwrap();
-                            let per_page = size.height - 5;
+                            let per_page = (size.height - 5) as usize;
 
-                            if selected < results.len() as u16 - per_page
+                            if selected < results.len() - per_page
                                 && results.len() > per_page as usize
                             {
                                 selected += per_page;
@@ -492,7 +491,7 @@ fn main() -> Result<(), io::Error> {
                             redraw = true;
                         }
                         'G' => {
-                            selected = results.len() as u16 - 1;
+                            selected = results.len() - 1;
                             redraw = true;
                         }
                         'R' => {
@@ -551,9 +550,10 @@ fn search(query: &str, command: &str) -> String {
     String::from_utf8(output.stdout).unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn format_results(
     lines: &[String],
-    selected: u16,
+    selected: usize,
     height: usize,
     pad_to: usize,
     skip: usize,
@@ -593,12 +593,12 @@ fn format_results(
                 Span::styled(
                     line.clone(),
                     if installed_cache.contains(&(i + skip - 1)) {
-                        if selected == (index - 1) as u16 {
+                        if selected == index - 1 {
                             installed_selected_style
                         } else {
                             installed_style
                         }
-                    } else if selected == (index - 1) as u16 {
+                    } else if selected == index - 1 {
                         uninstalled_selected_style
                     } else {
                         uninstalled_style
