@@ -590,9 +590,8 @@ fn format_results(
             let index = i + skip;
             let index_string = " ".to_string() + &index.to_string();
             Spans::from(vec![
-                Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize)),
                 Span::styled(index_string, index_style),
-                Span::raw(" "),
+                Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
                 Span::styled(
                     line.clone(),
                     if installed_cache.contains(&(i + skip - 1)) {
