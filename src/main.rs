@@ -73,7 +73,7 @@ fn main() -> Result<(), io::Error> {
     loop {
         let mut line = selected;
         if let Ok(size) = terminal.size() {
-            if size.height <= 10 {
+            if size.height < 10 || size.width < 10 {
                 continue;
             }
 
@@ -590,8 +590,9 @@ fn format_results(
             let index = i + skip;
             let index_string = " ".to_string() + &index.to_string();
             Spans::from(vec![
+                Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize)),
                 Span::styled(index_string, index_style),
-                Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
+                Span::raw(" "),
                 Span::styled(
                     line.clone(),
                     if installed_cache.contains(&(i + skip - 1)) {
