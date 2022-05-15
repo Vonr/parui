@@ -235,7 +235,7 @@ fn main() -> Result<(), io::Error> {
                     };
 
                     let info = Paragraph::new(info.to_vec())
-                        .wrap(Wrap { trim: true })
+                        .wrap(Wrap { trim: false })
                         .scroll((info_scroll as u16, 0));
                     s.render_widget(info, area);
                 }
@@ -403,6 +403,11 @@ fn main() -> Result<(), io::Error> {
                             info.clear();
                             redraw = true;
                         }
+                    }
+                    KeyCode::Esc => {
+                        insert_pos = query.len() as u16;
+                        redraw = true;
+                        mode = Mode::Insert;
                     }
                     KeyCode::Char(c) => match c {
                         'j' => {
@@ -629,7 +634,7 @@ fn get_info(
 
     let mut info = Vec::with_capacity(stdout.lines().count());
     for line in stdout.lines().map(|c| c.to_owned()) {
-        if line.contains(':') {
+        if !line.starts_with(' ') && line.contains(':') {
             let (key, value) = line.split_once(':').unwrap();
             info.push(Spans::from(vec![
                 Span::styled(
@@ -686,7 +691,39 @@ fn print_help() {
         "        Not guaranteed to work well\n",
         "        Default: paru\n",
         "    -h\n",
-        "        Print this help and exit"
+        "        Print this help and exit\n",
+        "Keybinds:\n",
+        "    Both:\n",
+        "       <Escape>\n",
+        "           Switch Modes\n",
+        "       <C-c>\n",
+        "           Exit parui\n",
+        "   Insert:\n",
+        "       <Return>\n",
+        "           Search for query\n",
+        "       <C-w>\n",
+        "           Remove previous word\n",
+        "   Select:\n",
+        "       i:\n",
+        "           Enter insert mode\n",
+        "       <Return>:\n",
+        "           Find info or install\n",
+        "       <C-j>, <C-Down>:\n",
+        "           Move info one row down\n",
+        "       <C-k>, <C-Up>:\n",
+        "           Move info one row up\n",
+        "       h, <Left>:\n",
+        "           Move one page back\n",
+        "       j, <Down>:\n",
+        "           Move one row down\n",
+        "       k, <Up>:\n",
+        "           Move one row up\n",
+        "       l, <Right>:\n",
+        "           Move one page forwards\n",
+        "       <S-R>:\n",
+        "           Remove installed package\n",
+        "       q:\n",
+        "           Exit parui",
     ));
     exit(0);
 }

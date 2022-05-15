@@ -26,10 +26,10 @@ parui adopts vim-like keybinds.
 
 | Key                 | Mode   | Action                   |
 |---------------------|--------|--------------------------|
-| \<Escape\>          | Insert | Enter Select Mode        |
 | \<Return\>          | Insert | Search for query         |
 | \<C-w\>             | Insert | Removes previous word    |
 | \<C-c\>             | Both   | Exits parui              |
+| \<Escape\>          | Both   | Switch Modes             |
 | i                   | Select | Enter Insert Mode        |
 | \<Return\>          | Select | Find info or installs    |
 | \<C-j\>, \<C-Down\> | Select | Moves info one row down  |
