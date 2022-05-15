@@ -715,6 +715,21 @@ impl Config {
             }
         }
 
+        if let Err(err) = std::process::Command::new(command.as_str())
+            .arg("-h")
+            .output()
+        {
+            match err.kind() {
+                std::io::ErrorKind::NotFound => {
+                    eprintln!("parui: {}: command not found", command);
+                }
+                _ => {
+                    eprintln!("parui: {}: {}", command, err);
+                }
+            }
+            exit(1);
+        }
+
         Self { query, command }
     }
 }
