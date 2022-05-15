@@ -125,7 +125,7 @@ fn main() -> Result<(), io::Error> {
                         selected,
                         size.height as usize,
                         (results.len() as f32 + 1f32).log10().ceil() as usize,
-                        skipped as usize,
+                        skipped,
                         &mut installed_cache,
                         &mut cached_pages,
                         &command,
@@ -176,7 +176,7 @@ fn main() -> Result<(), io::Error> {
                         s.render_widget(border, area);
 
                         let no_info = info.is_empty();
-                        let is_installed = installed_cache.contains(&(selected as usize));
+                        let is_installed = installed_cache.contains(&selected);
                         let area = Rect {
                             x: size.width / 2 + 2,
                             y: 5,
@@ -192,7 +192,7 @@ fn main() -> Result<(), io::Error> {
                                         .fg(Color::Green)
                                         .add_modifier(Modifier::BOLD),
                                 )));
-                                if installed_cache.contains(&(selected as usize)) {
+                                if installed_cache.contains(&selected) {
                                     actions.push(Spans::from(Span::styled(
                                         "Press Shift-R to uninstall this package".to_owned(),
                                         Style::default()
@@ -261,16 +261,26 @@ fn main() -> Result<(), io::Error> {
                             }
                         }
                         KeyCode::Left => {
-                            if insert_pos > 0 {
+                            if k.modifiers.contains(KeyModifiers::CONTROL) {
+                                let boundary = last_word_end(query.as_bytes(), insert_pos);
+                                insert_pos = boundary as u16;
+                            } else if insert_pos > 0 {
                                 insert_pos -= 1;
-                                redraw = true;
+                            } else {
+                                insert_pos = query.len() as u16;
                             }
+                            redraw = true;
                         }
                         KeyCode::Right => {
-                            if (insert_pos as usize) < query.len() {
+                            if k.modifiers.contains(KeyModifiers::CONTROL) {
+                                let boundary = next_word_start(query.as_bytes(), insert_pos);
+                                insert_pos = boundary as u16;
+                            } else if (insert_pos as usize) < query.len() {
                                 insert_pos += 1;
-                                redraw = true;
+                            } else {
+                                insert_pos = 0;
                             }
+                            redraw = true;
                         }
                         KeyCode::Backspace => {
                             if insert_pos != 0 {
@@ -295,17 +305,7 @@ fn main() -> Result<(), io::Error> {
                             }
                             'w' => {
                                 if k.modifiers == KeyModifiers::CONTROL {
-                                    let chars = query.as_bytes();
-                                    let mut boundary = 0;
-                                    for (i, c) in chars.iter().take(insert_pos as usize).enumerate()
-                                    {
-                                        match *c as char {
-                                            ' ' | '-' | '_' => {
-                                                boundary = i;
-                                            }
-                                            _ => (),
-                                        }
-                                    }
+                                    let boundary = last_word_end(query.as_bytes(), insert_pos);
                                     query = query[..boundary].to_string()
                                         + &query[insert_pos as usize..];
                                     insert_pos = boundary as u16;
@@ -383,21 +383,25 @@ fn main() -> Result<(), io::Error> {
                             }
                         }
                         KeyCode::Left => {
-                            let per_page = (size.height - 5) as usize;
-
-                            if selected >= per_page && results.len() > per_page as usize {
-                                selected -= per_page;
+                            if results.len() > per_page {
+                                if selected >= per_page {
+                                    selected -= per_page;
+                                } else {
+                                    selected = results.len() - 1;
+                                }
                                 info.clear();
                                 redraw = true;
                             }
                         }
                         KeyCode::Right => {
-                            let per_page = (size.height - 5) as usize;
-
-                            if selected < results.len() - per_page
-                                && results.len() > per_page as usize
-                            {
-                                selected += per_page;
+                            if results.len() > per_page {
+                                if selected == results.len() - 1 {
+                                    selected = 0;
+                                } else if selected + per_page > results.len() - 1 {
+                                    selected = results.len() - 1;
+                                } else {
+                                    selected += per_page;
+                                }
                                 info.clear();
                                 redraw = true;
                             }
@@ -444,21 +448,25 @@ fn main() -> Result<(), io::Error> {
                                 }
                             }
                             'h' => {
-                                let per_page = (size.height - 5) as usize;
-
-                                if selected >= per_page && results.len() > per_page {
-                                    selected -= per_page;
+                                if results.len() > per_page {
+                                    if selected >= per_page {
+                                        selected -= per_page;
+                                    } else {
+                                        selected = results.len() - 1;
+                                    }
                                     info.clear();
                                     redraw = true;
                                 }
                             }
                             'l' => {
-                                let per_page = (size.height - 5) as usize;
-
-                                if selected < results.len() - per_page
-                                    && results.len() > per_page as usize
-                                {
-                                    selected += per_page;
+                                if results.len() > per_page {
+                                    if selected == results.len() - 1 {
+                                        selected = 0;
+                                    } else if selected + per_page > results.len() - 1 {
+                                        selected = results.len() - 1;
+                                    } else {
+                                        selected += per_page;
+                                    }
                                     info.clear();
                                     redraw = true;
                                 }
@@ -497,7 +505,7 @@ fn main() -> Result<(), io::Error> {
                                 redraw = true;
                             }
                             'R' => {
-                                if installed_cache.contains(&(selected as usize)) {
+                                if installed_cache.contains(&selected) {
                                     disable_raw_mode()?;
                                     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
@@ -505,7 +513,7 @@ fn main() -> Result<(), io::Error> {
                                     terminal.set_cursor(0, 0)?;
                                     terminal.show_cursor()?;
                                     let mut cmd = Command::new(command);
-                                    cmd.arg("-R").arg(&(results[selected as usize]));
+                                    cmd.arg("-R").arg(&(results[selected]));
                                     cmd.exec();
 
                                     return Ok(());
@@ -517,8 +525,8 @@ fn main() -> Result<(), io::Error> {
                         KeyCode::Enter => {
                             if info.is_empty() {
                                 info = get_info(
-                                    &(results[selected as usize]),
-                                    selected as usize,
+                                    &(results[selected]),
+                                    selected,
                                     &installed_cache,
                                     &command,
                                 );
@@ -531,7 +539,7 @@ fn main() -> Result<(), io::Error> {
                                 terminal.set_cursor(0, 0)?;
                                 terminal.show_cursor()?;
                                 let mut cmd = Command::new(command);
-                                cmd.args(["--rebuild", "-S", &(results[selected as usize])]);
+                                cmd.args(["--rebuild", "-S", &(results[selected])]);
                                 cmd.exec();
 
                                 return Ok(());
@@ -549,7 +557,7 @@ fn main() -> Result<(), io::Error> {
 fn search(query: &str, command: &str) -> String {
     let mut cmd = Command::new(command);
     cmd.args(["--topdown", "-Ssq", query]);
-    get_cmd_output(cmd)
+    cmd_output(cmd)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -626,7 +634,7 @@ fn get_info(
     };
     cmd.arg(query);
 
-    let output = get_cmd_output(cmd);
+    let output = cmd_output(cmd);
 
     let mut info = Vec::with_capacity(output.lines().count());
     for line in output.lines().map(|c| c.to_owned()) {
@@ -663,7 +671,7 @@ fn is_installed(
     cmd.arg("-Qq");
     cmd.args(queries);
 
-    let output = get_cmd_output(cmd);
+    let output = cmd_output(cmd);
 
     let mut index;
     for (i, query) in queries.iter().enumerate() {
@@ -676,13 +684,44 @@ fn is_installed(
     cached_pages.insert(skip);
 }
 
-fn get_cmd_output(mut cmd: Command) -> String {
+fn cmd_output(mut cmd: Command) -> String {
     if let Ok(output) = cmd.output() {
         if let Ok(output) = String::from_utf8(output.stdout) {
             return output;
         }
     }
     String::new()
+}
+
+fn last_word_end(bytes: &[u8], pos: u16) -> usize {
+    let mut boundary = 0;
+    for (i, c) in bytes.iter().take(pos as usize).enumerate() {
+        match *c as char {
+            ' ' | '-' | '_' => {
+                boundary = i;
+            }
+            _ => (),
+        }
+    }
+    boundary
+}
+
+fn next_word_start(bytes: &[u8], pos: u16) -> usize {
+    let mut boundary = pos as usize;
+    for (i, c) in bytes.iter().skip(boundary).enumerate() {
+        match *c as char {
+            ' ' | '-' | '_' => {
+                boundary = i + 1;
+                break;
+            }
+            _ => (),
+        }
+    }
+    if boundary == pos as usize {
+        bytes.len()
+    } else {
+        boundary
+    }
 }
 
 fn print_help() {
