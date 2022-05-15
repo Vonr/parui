@@ -283,7 +283,7 @@ fn main() -> Result<(), io::Error> {
                             'c' => {
                                 if k.modifiers == KeyModifiers::CONTROL {
                                     disable_raw_mode()?;
-                                    execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+                                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                                     terminal.clear()?;
                                     terminal.set_cursor(0, 0)?;
 
@@ -465,7 +465,7 @@ fn main() -> Result<(), io::Error> {
                             }
                             'q' => {
                                 disable_raw_mode()?;
-                                execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+                                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                                 terminal.clear()?;
                                 terminal.set_cursor(0, 0)?;
 
@@ -479,7 +479,7 @@ fn main() -> Result<(), io::Error> {
                             'c' => {
                                 if k.modifiers == KeyModifiers::CONTROL {
                                     disable_raw_mode()?;
-                                    execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+                                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                                     terminal.clear()?;
                                     terminal.set_cursor(0, 0)?;
 
@@ -499,7 +499,7 @@ fn main() -> Result<(), io::Error> {
                             'R' => {
                                 if installed_cache.contains(&(selected as usize)) {
                                     disable_raw_mode()?;
-                                    execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+                                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
                                     terminal.clear()?;
                                     terminal.set_cursor(0, 0)?;
@@ -525,7 +525,7 @@ fn main() -> Result<(), io::Error> {
                                 redraw = true;
                             } else {
                                 disable_raw_mode()?;
-                                execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
+                                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
                                 terminal.clear()?;
                                 terminal.set_cursor(0, 0)?;
