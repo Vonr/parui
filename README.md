@@ -31,7 +31,7 @@ parui adopts vim-like keybinds.
 | \<C-c\>             | Both   | Exits parui              |
 | \<Escape\>          | Both   | Switch Modes             |
 | i                   | Select | Enter Insert Mode        |
-| \<Return\>          | Select | Find info or installs    |
+| \<Return\>          | Select | Install selected package |
 | \<C-j\>, \<C-Down\> | Select | Moves info one row down  |
 | \<C-k\>, \<C-Up\>   | Select | Moves info one row up    |
 | h, \<Left\>         | Select | Moves one page back      |
@@ -43,7 +43,6 @@ parui adopts vim-like keybinds.
 
 ### Images
 ![Start Screen](images/start.png)
-![Search](images/search.png)
 ![Info](images/info.png)
 ![Info Scrolling](images/info_scrolling.png)
 
