@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 use std::env::Args;
 use std::os::unix::prelude::CommandExt;
-use std::process::{exit, Command};
+use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::time::Duration;
 use std::{env, io};
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
@@ -13,6 +13,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use naive_opt::Search;
+use tokio::process::Command;
 use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
 use tui::{
@@ -33,7 +34,8 @@ struct Config {
     command: String,
 }
 
-fn main() -> Result<(), io::Error> {
+#[tokio::main]
+async fn main() -> Result<(), io::Error> {
     let args = Config::new(env::args());
     let command = args.command;
 
@@ -47,15 +49,15 @@ fn main() -> Result<(), io::Error> {
     let mode = Arc::new(Mutex::new(Mode::Insert));
     let mut selected: usize = 0;
     let mut info_scroll = 0;
-    let mut info = Vec::new();
+    let info = Arc::new(Mutex::new(Vec::new()));
     let redraw = Arc::new(AtomicBool::new(true));
     let mut insert_pos = 0;
 
-    let mut installed_cache = HashSet::new();
+    let installed_cache = Arc::new(Mutex::new(HashSet::new()));
     let mut cached_pages = HashSet::new();
     let error_msg = Arc::new(Mutex::new("Try searching for something"));
 
-    let mut search_thread = None;
+    let mut _search_thread = None;
 
     if let Some(argquery) = args.query {
         query = argquery.clone();
@@ -66,12 +68,12 @@ fn main() -> Result<(), io::Error> {
         let command = command.clone();
         let error_msg = error_msg.clone();
         let redraw = redraw.clone();
-        search_thread = Some(thread::spawn(move || {
+        _search_thread = Some(tokio::spawn(async move {
             {
                 *mode.lock().unwrap() = Mode::Select;
             }
             terminal.lock().unwrap().set_cursor(2, 4).unwrap();
-            let packages = search(&argquery, &command);
+            let packages = search(&argquery, &command).await;
 
             for line in packages.lines() {
                 results.lock().unwrap().push(line.to_owned());
@@ -110,6 +112,41 @@ fn main() -> Result<(), io::Error> {
             if redraw.load(Ordering::SeqCst) {
                 redraw.store(false, Ordering::SeqCst);
                 let mut terminal = terminal.lock().unwrap();
+
+                let formatted_results = {
+                    let results = results.lock().unwrap();
+                    format_results(
+                        &results,
+                        selected,
+                        size.height as usize,
+                        (results.len() as f32 + 1f32).log10().ceil() as usize,
+                        skipped,
+                        &mut installed_cache.lock().unwrap(),
+                        &mut cached_pages,
+                        &command,
+                    )
+                    .await
+                };
+
+                if info.lock().unwrap().is_empty() && !results.lock().unwrap().is_empty() {
+                    let results = results.clone();
+                    let command = command.clone();
+                    let redraw = redraw.clone();
+                    let info = info.clone();
+                    let installed_cache = installed_cache.clone();
+                    if let Some(search_thread) = _search_thread {
+                        search_thread.abort();
+                    }
+                    _search_thread = Some(tokio::spawn(async move {
+                        let query = results.lock().unwrap()[selected].clone();
+                        let query = &query;
+
+                        let newinfo = get_info(query, selected, installed_cache, &command).await;
+                        *info.lock().unwrap() = newinfo;
+                        redraw.store(true, Ordering::SeqCst);
+                    }))
+                }
+
                 terminal.draw(|s| {
                     let chunks = Layout::default()
                         .constraints([Constraint::Min(3), Constraint::Percentage(100)].as_ref())
@@ -144,27 +181,17 @@ fn main() -> Result<(), io::Error> {
                     .alignment(Alignment::Left);
                     s.render_widget(para, chunks[0]);
 
-                    let results = results.lock().unwrap();
-                    let para = Paragraph::new(format_results(
-                        &results,
-                        selected,
-                        size.height as usize,
-                        (results.len() as f32 + 1f32).log10().ceil() as usize,
-                        skipped,
-                        &mut installed_cache,
-                        &mut cached_pages,
-                        &command,
-                    ))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(results_color))
-                            .border_type(BorderType::Rounded),
-                    )
-                    .alignment(Alignment::Left);
+                    let para = Paragraph::new(formatted_results)
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(results_color))
+                                .border_type(BorderType::Rounded),
+                        )
+                        .alignment(Alignment::Left);
                     s.render_widget(para, chunks[1]);
 
-                    if results.is_empty() {
+                    if results.lock().unwrap().is_empty() {
                         let area = Rect {
                             x: size.width / 4 + 1,
                             y: size.height / 2 - 2,
@@ -200,8 +227,9 @@ fn main() -> Result<(), io::Error> {
                         s.render_widget(Clear, area);
                         s.render_widget(border, area);
 
+                        let info = info.lock().unwrap();
                         let no_info = info.is_empty();
-                        let is_installed = installed_cache.contains(&selected);
+                        let is_installed = installed_cache.lock().unwrap().contains(&selected);
                         let area = Rect {
                             x: size.width / 2 + 2,
                             y: 5,
@@ -210,22 +238,7 @@ fn main() -> Result<(), io::Error> {
                         };
                         let actions = Paragraph::new({
                             let mut actions = Vec::new();
-                            if no_info {
-                                actions.push(Spans::from(Span::styled(
-                                    "Press ENTER to show package information".to_owned(),
-                                    Style::default()
-                                        .fg(Color::Green)
-                                        .add_modifier(Modifier::BOLD),
-                                )));
-                                if installed_cache.contains(&selected) {
-                                    actions.push(Spans::from(Span::styled(
-                                        "Press Shift-R to uninstall this package".to_owned(),
-                                        Style::default()
-                                            .fg(Color::Red)
-                                            .add_modifier(Modifier::BOLD),
-                                    )));
-                                }
-                            } else if is_installed {
+                            if is_installed {
                                 actions.push(Spans::from(Span::styled(
                                     "Press ENTER again to reinstall this package",
                                     Style::default()
@@ -264,7 +277,9 @@ fn main() -> Result<(), io::Error> {
                 })?;
             }
 
-            match *mode.lock().unwrap() {
+            let modemutex = mode.clone();
+            let mut mode = mode.lock().unwrap();
+            match *mode {
                 Mode::Insert => {
                     let mut terminal = terminal.lock().unwrap();
                     terminal.set_cursor(insert_pos + 10, 1)?;
@@ -277,208 +292,122 @@ fn main() -> Result<(), io::Error> {
                 }
             }
 
-            let modemutex = mode.clone();
-            let mut mode = mode.lock().unwrap();
-            match event::read()? {
-                Event::Key(k) => match *mode {
-                    Mode::Insert => match k.code {
-                        KeyCode::Esc => {
-                            if !results.lock().unwrap().is_empty() {
-                                selected = 0;
-                                redraw.store(true, Ordering::SeqCst);
-                                *mode = Mode::Select;
-                            }
-                        }
-                        KeyCode::Left => {
-                            if k.modifiers.contains(KeyModifiers::CONTROL) {
-                                let boundary = last_word_end(query.as_bytes(), insert_pos);
-                                insert_pos = boundary as u16;
-                            } else if insert_pos > 0 {
-                                insert_pos -= 1;
-                            } else {
-                                insert_pos = query.len() as u16;
-                            }
-                            redraw.store(true, Ordering::SeqCst);
-                        }
-                        KeyCode::Right => {
-                            if k.modifiers.contains(KeyModifiers::CONTROL) {
-                                let boundary = next_word_start(query.as_bytes(), insert_pos);
-                                insert_pos = boundary as u16;
-                            } else if (insert_pos as usize) < query.len() {
-                                insert_pos += 1;
-                            } else {
-                                insert_pos = 0;
-                            }
-                            redraw.store(true, Ordering::SeqCst);
-                        }
-                        KeyCode::Backspace => {
-                            if insert_pos != 0 {
-                                query.remove(insert_pos as usize - 1);
-                                insert_pos -= 1;
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        }
-                        KeyCode::Char(c) => match c {
-                            'c' => {
-                                if k.modifiers == KeyModifiers::CONTROL {
-                                    disable_raw_mode()?;
-                                    if let Some(search_thread) = search_thread {
-                                        search_thread.join().unwrap();
-                                    }
-                                    let mut terminal = terminal.lock().unwrap();
-                                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                                    terminal.clear()?;
-                                    terminal.set_cursor(0, 0)?;
-
-                                    return Ok(());
+            if event::poll(Duration::from_millis(50))? {
+                match event::read()? {
+                    Event::Key(k) => match *mode {
+                        Mode::Insert => match k.code {
+                            KeyCode::Esc => {
+                                if !results.lock().unwrap().is_empty() {
+                                    selected = 0;
+                                    redraw.store(true, Ordering::SeqCst);
+                                    *mode = Mode::Select;
                                 }
-                                query.insert(insert_pos as usize, c);
-                                insert_pos += 1;
+                            }
+                            KeyCode::Left => {
+                                if k.modifiers.contains(KeyModifiers::CONTROL) {
+                                    let boundary = last_word_end(query.as_bytes(), insert_pos);
+                                    insert_pos = boundary as u16;
+                                } else if insert_pos > 0 {
+                                    insert_pos -= 1;
+                                } else {
+                                    insert_pos = query.len() as u16;
+                                }
                                 redraw.store(true, Ordering::SeqCst);
                             }
-                            'w' => {
-                                if k.modifiers == KeyModifiers::CONTROL {
-                                    let boundary = last_word_end(query.as_bytes(), insert_pos);
-                                    query = query[..boundary].to_string()
-                                        + &query[insert_pos as usize..];
+                            KeyCode::Right => {
+                                if k.modifiers.contains(KeyModifiers::CONTROL) {
+                                    let boundary = next_word_start(query.as_bytes(), insert_pos);
                                     insert_pos = boundary as u16;
+                                } else if (insert_pos as usize) < query.len() {
+                                    insert_pos += 1;
                                 } else {
+                                    insert_pos = 0;
+                                }
+                                redraw.store(true, Ordering::SeqCst);
+                            }
+                            KeyCode::Backspace => {
+                                if insert_pos != 0 {
+                                    query.remove(insert_pos as usize - 1);
+                                    insert_pos -= 1;
+                                    redraw.store(true, Ordering::SeqCst);
+                                }
+                            }
+                            KeyCode::Char(c) => match c {
+                                'c' => {
+                                    if k.modifiers == KeyModifiers::CONTROL {
+                                        disable_raw_mode()?;
+                                        let mut terminal = terminal.lock().unwrap();
+                                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                                        terminal.clear()?;
+                                        terminal.set_cursor(0, 0)?;
+
+                                        return Ok(());
+                                    }
                                     query.insert(insert_pos as usize, c);
                                     insert_pos += 1;
+                                    redraw.store(true, Ordering::SeqCst);
                                 }
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                            _ => {
-                                query.insert(insert_pos as usize, c);
-                                insert_pos += 1;
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        },
-                        KeyCode::Enter => {
-                            installed_cache.clear();
-                            cached_pages.clear();
-                            info.clear();
-                            selected = 0;
-                            if query.as_bytes().len() > 1 {
-                                let terminal = terminal.clone();
-                                let mode = modemutex.clone();
-                                let results = results.clone();
-                                let command = command.clone();
-                                let error_msg = error_msg.clone();
-                                let redraw = redraw.clone();
-                                let query = query.clone();
-                                search_thread = Some(thread::spawn(move || {
-                                    terminal.lock().unwrap().set_cursor(2, 4).unwrap();
-                                    let packages = search(&query, &command);
-
-                                    let mut results = results.lock().unwrap();
-                                    results.clear();
-                                    packages.lines().for_each(|s| {
-                                        results.push(s.to_owned());
-                                    });
-
-                                    if !results.is_empty() {
-                                        *mode.lock().unwrap() = Mode::Select;
+                                'w' => {
+                                    if k.modifiers == KeyModifiers::CONTROL {
+                                        let boundary = last_word_end(query.as_bytes(), insert_pos);
+                                        query = query[..boundary].to_string()
+                                            + &query[insert_pos as usize..];
+                                        insert_pos = boundary as u16;
                                     } else {
-                                        *error_msg.lock().unwrap() =
+                                        query.insert(insert_pos as usize, c);
+                                        insert_pos += 1;
+                                    }
+                                    redraw.store(true, Ordering::SeqCst);
+                                }
+                                _ => {
+                                    query.insert(insert_pos as usize, c);
+                                    insert_pos += 1;
+                                    redraw.store(true, Ordering::SeqCst);
+                                }
+                            },
+                            KeyCode::Enter => {
+                                installed_cache.lock().unwrap().clear();
+                                cached_pages.clear();
+                                info.lock().unwrap().clear();
+                                selected = 0;
+                                if query.as_bytes().len() > 1 {
+                                    let terminal = terminal.clone();
+                                    let mode = modemutex.clone();
+                                    let results = results.clone();
+                                    let command = command.clone();
+                                    let error_msg = error_msg.clone();
+                                    let redraw = redraw.clone();
+                                    let query = query.clone();
+                                    if let Some(search_thread) = _search_thread {
+                                        search_thread.abort();
+                                    }
+                                    _search_thread = Some(tokio::spawn(async move {
+                                        terminal.lock().unwrap().set_cursor(2, 4).unwrap();
+                                        let packages = search(&query, &command).await;
+
+                                        let mut results = results.lock().unwrap();
+                                        results.clear();
+                                        packages.lines().for_each(|s| {
+                                            results.push(s.to_owned());
+                                        });
+
+                                        if !results.is_empty() {
+                                            *mode.lock().unwrap() = Mode::Select;
+                                        } else {
+                                            *error_msg.lock().unwrap() =
                                         "No or too many results, try searching for something else";
-                                    }
-                                    redraw.store(true, Ordering::SeqCst);
-                                }));
-                            } else {
-                                *error_msg.lock().unwrap() =
-                                    "Query should be at least 2 characters long";
-                            }
-                        }
-                        _ => redraw.store(true, Ordering::SeqCst),
-                    },
-                    Mode::Select => match k.code {
-                        KeyCode::Up => {
-                            if k.modifiers == KeyModifiers::CONTROL {
-                                if info_scroll > 0 {
-                                    info_scroll -= 1;
-                                    redraw.store(true, Ordering::SeqCst);
-                                }
-                            } else {
-                                if selected > 0 {
-                                    selected -= 1;
-                                    info.clear();
-                                } else {
-                                    selected = results.lock().unwrap().len() - 1;
-                                    info.clear();
-                                }
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        }
-                        KeyCode::Down => {
-                            if k.modifiers == KeyModifiers::CONTROL {
-                                if !info.is_empty() {
-                                    info_scroll += 1;
-                                    redraw.store(true, Ordering::SeqCst);
-                                }
-                            } else {
-                                let result_count = results.lock().unwrap().len();
-                                if result_count > 1 && selected < result_count - 1 {
-                                    selected += 1;
-                                    info.clear();
-                                } else {
-                                    selected = 0;
-                                    info.clear();
-                                }
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        }
-                        KeyCode::Left => {
-                            let results_count = results.lock().unwrap().len();
-                            if results_count > per_page {
-                                if selected >= per_page {
-                                    selected -= per_page;
-                                } else {
-                                    selected = results_count - 1;
-                                }
-                                info.clear();
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        }
-                        KeyCode::Right => {
-                            let results = results.lock().unwrap();
-                            if results.len() > per_page {
-                                if selected == results.len() - 1 {
-                                    selected = 0;
-                                } else if selected + per_page > results.len() - 1 {
-                                    selected = results.len() - 1;
-                                } else {
-                                    selected += per_page;
-                                }
-                                info.clear();
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        }
-                        KeyCode::Esc => {
-                            insert_pos = query.len() as u16;
-                            redraw.store(true, Ordering::SeqCst);
-                            *mode = Mode::Insert;
-                        }
-                        KeyCode::Char(c) => match c {
-                            'j' => {
-                                if k.modifiers == KeyModifiers::CONTROL {
-                                    if !info.is_empty() {
-                                        info_scroll += 1;
+                                        }
                                         redraw.store(true, Ordering::SeqCst);
-                                    }
+                                    }));
                                 } else {
-                                    let result_count = results.lock().unwrap().len();
-                                    if result_count > 1 && selected < result_count - 1 {
-                                        selected += 1;
-                                        info.clear();
-                                    } else {
-                                        selected = 0;
-                                        info.clear();
-                                    }
-                                    redraw.store(true, Ordering::SeqCst);
+                                    *error_msg.lock().unwrap() =
+                                        "Query should be at least 2 characters long";
                                 }
                             }
-                            'k' => {
+                            _ => redraw.store(true, Ordering::SeqCst),
+                        },
+                        Mode::Select => match k.code {
+                            KeyCode::Up => {
                                 if k.modifiers == KeyModifiers::CONTROL {
                                     if info_scroll > 0 {
                                         info_scroll -= 1;
@@ -487,15 +416,33 @@ fn main() -> Result<(), io::Error> {
                                 } else {
                                     if selected > 0 {
                                         selected -= 1;
-                                        info.clear();
+                                        info.lock().unwrap().clear();
                                     } else {
                                         selected = results.lock().unwrap().len() - 1;
-                                        info.clear();
+                                        info.lock().unwrap().clear();
                                     }
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                             }
-                            'h' => {
+                            KeyCode::Down => {
+                                if k.modifiers == KeyModifiers::CONTROL {
+                                    if !info.lock().unwrap().is_empty() {
+                                        info_scroll += 1;
+                                        redraw.store(true, Ordering::SeqCst);
+                                    }
+                                } else {
+                                    let result_count = results.lock().unwrap().len();
+                                    if result_count > 1 && selected < result_count - 1 {
+                                        selected += 1;
+                                        info.lock().unwrap().clear();
+                                    } else {
+                                        selected = 0;
+                                        info.lock().unwrap().clear();
+                                    }
+                                    redraw.store(true, Ordering::SeqCst);
+                                }
+                            }
+                            KeyCode::Left => {
                                 let results_count = results.lock().unwrap().len();
                                 if results_count > per_page {
                                     if selected >= per_page {
@@ -503,11 +450,11 @@ fn main() -> Result<(), io::Error> {
                                     } else {
                                         selected = results_count - 1;
                                     }
-                                    info.clear();
+                                    info.lock().unwrap().clear();
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                             }
-                            'l' => {
+                            KeyCode::Right => {
                                 let results = results.lock().unwrap();
                                 if results.len() > per_page {
                                     if selected == results.len() - 1 {
@@ -517,26 +464,78 @@ fn main() -> Result<(), io::Error> {
                                     } else {
                                         selected += per_page;
                                     }
-                                    info.clear();
+                                    info.lock().unwrap().clear();
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                             }
-                            'q' => {
-                                disable_raw_mode()?;
-                                let mut terminal = terminal.lock().unwrap();
-                                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                                terminal.clear()?;
-                                terminal.set_cursor(0, 0)?;
-
-                                return Ok(());
-                            }
-                            'i' => {
+                            KeyCode::Esc => {
                                 insert_pos = query.len() as u16;
                                 redraw.store(true, Ordering::SeqCst);
                                 *mode = Mode::Insert;
                             }
-                            'c' => {
-                                if k.modifiers == KeyModifiers::CONTROL {
+                            KeyCode::Char(c) => match c {
+                                'j' => {
+                                    if k.modifiers == KeyModifiers::CONTROL {
+                                        if !info.lock().unwrap().is_empty() {
+                                            info_scroll += 1;
+                                            redraw.store(true, Ordering::SeqCst);
+                                        }
+                                    } else {
+                                        let result_count = results.lock().unwrap().len();
+                                        if result_count > 1 && selected < result_count - 1 {
+                                            selected += 1;
+                                            info.lock().unwrap().clear();
+                                        } else {
+                                            selected = 0;
+                                            info.lock().unwrap().clear();
+                                        }
+                                        redraw.store(true, Ordering::SeqCst);
+                                    }
+                                }
+                                'k' => {
+                                    if k.modifiers == KeyModifiers::CONTROL {
+                                        if info_scroll > 0 {
+                                            info_scroll -= 1;
+                                            redraw.store(true, Ordering::SeqCst);
+                                        }
+                                    } else {
+                                        if selected > 0 {
+                                            selected -= 1;
+                                            info.lock().unwrap().clear();
+                                        } else {
+                                            selected = results.lock().unwrap().len() - 1;
+                                            info.lock().unwrap().clear();
+                                        }
+                                        redraw.store(true, Ordering::SeqCst);
+                                    }
+                                }
+                                'h' => {
+                                    let results_count = results.lock().unwrap().len();
+                                    if results_count > per_page {
+                                        if selected >= per_page {
+                                            selected -= per_page;
+                                        } else {
+                                            selected = results_count - 1;
+                                        }
+                                        info.lock().unwrap().clear();
+                                        redraw.store(true, Ordering::SeqCst);
+                                    }
+                                }
+                                'l' => {
+                                    let results = results.lock().unwrap();
+                                    if results.len() > per_page {
+                                        if selected == results.len() - 1 {
+                                            selected = 0;
+                                        } else if selected + per_page > results.len() - 1 {
+                                            selected = results.len() - 1;
+                                        } else {
+                                            selected += per_page;
+                                        }
+                                        info.lock().unwrap().clear();
+                                        redraw.store(true, Ordering::SeqCst);
+                                    }
+                                }
+                                'q' => {
                                     disable_raw_mode()?;
                                     let mut terminal = terminal.lock().unwrap();
                                     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -545,46 +544,52 @@ fn main() -> Result<(), io::Error> {
 
                                     return Ok(());
                                 }
-                                query.push(c);
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                            'g' => {
-                                selected = 0;
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                            'G' => {
-                                selected = results.lock().unwrap().len() - 1;
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                            'R' => {
-                                if installed_cache.contains(&selected) {
-                                    disable_raw_mode()?;
-                                    let mut terminal = terminal.lock().unwrap();
-                                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-                                    terminal.clear()?;
-                                    terminal.set_cursor(0, 0)?;
-                                    terminal.show_cursor()?;
-                                    let mut cmd = Command::new(command);
-                                    cmd.arg("-R").arg(&(results.lock().unwrap()[selected]));
-                                    cmd.exec();
-
-                                    return Ok(());
+                                'i' => {
+                                    insert_pos = query.len() as u16;
+                                    redraw.store(true, Ordering::SeqCst);
+                                    *mode = Mode::Insert;
                                 }
-                            }
+                                'c' => {
+                                    if k.modifiers == KeyModifiers::CONTROL {
+                                        disable_raw_mode()?;
+                                        let mut terminal = terminal.lock().unwrap();
+                                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                                        terminal.clear()?;
+                                        terminal.set_cursor(0, 0)?;
 
-                            _ => redraw.store(true, Ordering::SeqCst),
-                        },
-                        KeyCode::Enter => {
-                            if info.is_empty() {
-                                info = get_info(
-                                    &(results.lock().unwrap()[selected]),
-                                    selected,
-                                    &installed_cache,
-                                    &command,
-                                );
-                                redraw.store(true, Ordering::SeqCst);
-                            } else {
+                                        return Ok(());
+                                    }
+                                    query.push(c);
+                                    redraw.store(true, Ordering::SeqCst);
+                                }
+                                'g' => {
+                                    selected = 0;
+                                    redraw.store(true, Ordering::SeqCst);
+                                }
+                                'G' => {
+                                    selected = results.lock().unwrap().len() - 1;
+                                    redraw.store(true, Ordering::SeqCst);
+                                }
+                                'R' => {
+                                    if installed_cache.lock().unwrap().contains(&selected) {
+                                        disable_raw_mode()?;
+                                        let mut terminal = terminal.lock().unwrap();
+                                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+                                        terminal.clear()?;
+                                        terminal.set_cursor(0, 0)?;
+                                        terminal.show_cursor()?;
+                                        let mut cmd = std::process::Command::new(command);
+                                        cmd.arg("-R").arg(&(results.lock().unwrap()[selected]));
+                                        cmd.exec();
+
+                                        return Ok(());
+                                    }
+                                }
+
+                                _ => redraw.store(true, Ordering::SeqCst),
+                            },
+                            KeyCode::Enter => {
                                 disable_raw_mode()?;
                                 let mut terminal = terminal.lock().unwrap();
                                 execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -592,30 +597,30 @@ fn main() -> Result<(), io::Error> {
                                 terminal.clear()?;
                                 terminal.set_cursor(0, 0)?;
                                 terminal.show_cursor()?;
-                                let mut cmd = Command::new(command);
+                                let mut cmd = std::process::Command::new(command);
                                 cmd.args(["--rebuild", "-S", &(results.lock().unwrap()[selected])]);
                                 cmd.exec();
 
                                 return Ok(());
                             }
-                        }
-                        _ => redraw.store(true, Ordering::SeqCst),
+                            _ => redraw.store(true, Ordering::SeqCst),
+                        },
                     },
-                },
-                _ => redraw.store(true, Ordering::SeqCst),
+                    _ => redraw.store(true, Ordering::SeqCst),
+                }
             }
         }
     }
 }
 
-fn search(query: &str, command: &str) -> String {
+async fn search(query: &str, command: &str) -> String {
     let mut cmd = Command::new(command);
     cmd.args(["--topdown", "-Ssq", query]);
-    cmd_output(cmd)
+    cmd_output(cmd).await
 }
 
 #[allow(clippy::too_many_arguments)]
-fn format_results(
+async fn format_results(
     lines: &[String],
     selected: usize,
     height: usize,
@@ -646,7 +651,7 @@ fn format_results(
         return vec![Spans::default()];
     }
 
-    is_installed(&lines, skip, installed_cache, cached_pages, command);
+    is_installed(&lines, skip, installed_cache, cached_pages, command).await;
 
     lines
         .iter()
@@ -659,7 +664,7 @@ fn format_results(
                 Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
                 Span::styled(
                     line.clone(),
-                    if installed_cache.contains(&(i + skip + 1)) {
+                    if installed_cache.contains(&(i + skip)) {
                         if selected == index - 1 {
                             installed_selected_style
                         } else {
@@ -676,22 +681,22 @@ fn format_results(
         .collect()
 }
 
-fn get_info(
+async fn get_info(
     query: &String,
     index: usize,
-    installed_cache: &HashSet<usize>,
+    installed_cache: Arc<Mutex<HashSet<usize>>>,
     command: &str,
 ) -> Vec<Spans<'static>> {
     let mut cmd = Command::new(command);
 
-    if installed_cache.contains(&index) {
+    if installed_cache.lock().unwrap().contains(&index) {
         cmd.arg("-Qi");
     } else {
         cmd.arg("-Si");
     };
     cmd.arg(query);
 
-    let output = cmd_output(cmd);
+    let output = cmd_output(cmd).await;
 
     let mut info = Vec::with_capacity(output.lines().count());
     for line in output.lines().map(|c| c.to_owned()) {
@@ -713,7 +718,7 @@ fn get_info(
     info
 }
 
-fn is_installed(
+async fn is_installed(
     queries: &[String],
     skip: usize,
     installed_cache: &mut HashSet<usize>,
@@ -728,7 +733,7 @@ fn is_installed(
     cmd.arg("-Qq");
     cmd.args(queries);
 
-    let output = cmd_output(cmd);
+    let output = cmd_output(cmd).await;
 
     let mut index;
     for (i, query) in queries.iter().enumerate() {
@@ -741,8 +746,8 @@ fn is_installed(
     cached_pages.insert(skip);
 }
 
-fn cmd_output(mut cmd: Command) -> String {
-    if let Ok(output) = cmd.output() {
+async fn cmd_output(mut cmd: Command) -> String {
+    if let Ok(output) = cmd.output().await {
         if let Ok(output) = String::from_utf8(output.stdout) {
             return output;
         }
@@ -854,7 +859,10 @@ impl Config {
             }
         }
 
-        if let Err(err) = Command::new(command.as_str()).arg("-h").output() {
+        if let Err(err) = std::process::Command::new(command.as_str())
+            .arg("-h")
+            .output()
+        {
             match err.kind() {
                 std::io::ErrorKind::NotFound => {
                     eprintln!("parui: {}: command not found", command);
