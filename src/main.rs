@@ -14,6 +14,7 @@ use crossterm::terminal::{
 };
 use naive_opt::Search;
 use tokio::process::Command;
+use tokio::time::sleep;
 use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
 use tui::{
@@ -693,6 +694,7 @@ async fn get_info(
         cmd.arg("-Qi");
     } else {
         cmd.arg("-Si");
+        sleep(Duration::from_millis(300)).await;
     };
     cmd.arg(query);
 
