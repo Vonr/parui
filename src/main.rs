@@ -63,7 +63,6 @@ async fn main() -> Result<(), io::Error> {
     if let Some(argquery) = args.query {
         query = argquery.clone();
         insert_pos = query.len() as u16;
-        let terminal = terminal.clone();
         let mode = mode.clone();
         let results = results.clone();
         let command = command.clone();
@@ -71,17 +70,17 @@ async fn main() -> Result<(), io::Error> {
         let redraw = redraw.clone();
         _search_thread = Some(tokio::spawn(async move {
             {
-                *mode.lock().unwrap() = Mode::Select;
+                *error_msg.lock().unwrap() = "Searching for packages...";
+                redraw.store(true, Ordering::SeqCst);
             }
-            terminal.lock().unwrap().set_cursor(2, 4).unwrap();
             let packages = search(&argquery, &command).await;
 
             for line in packages.lines() {
                 results.lock().unwrap().push(line.to_owned());
             }
 
-            if packages.is_empty() {
-                *mode.lock().unwrap() = Mode::Insert;
+            if !packages.is_empty() {
+                *mode.lock().unwrap() = Mode::Select;
             } else {
                 *error_msg.lock().unwrap() =
                     "No or too many results, try searching for something else";
@@ -243,7 +242,7 @@ async fn main() -> Result<(), io::Error> {
                             x: size.width / 2 + 2,
                             y: 5,
                             width: size.width / 2 - 5,
-                            height: 1 + (no_info || is_installed) as u16,
+                            height: 1 + no_info as u16 * 2 + is_installed as u16,
                         };
                         let actions = Paragraph::new({
                             let mut actions = Vec::new();
@@ -266,6 +265,13 @@ async fn main() -> Result<(), io::Error> {
                                         .add_modifier(Modifier::BOLD),
                                 )));
                             }
+                            if no_info {
+                                actions.push(Spans::default());
+                                actions.push(Spans::from(Span::styled(
+                                    "Finding info...".to_owned(),
+                                    Style::default().fg(Color::Gray),
+                                )));
+                            }
                             actions
                         })
                         .alignment(Alignment::Left);
@@ -273,7 +279,7 @@ async fn main() -> Result<(), io::Error> {
 
                         let area = Rect {
                             x: size.width / 2 + 2,
-                            y: 7 + (no_info || is_installed) as u16,
+                            y: 7 + is_installed as u16 - no_info as u16,
                             width: size.width / 2 - 5,
                             height: size.height - 9 - (no_info || is_installed) as u16,
                         };
@@ -380,7 +386,6 @@ async fn main() -> Result<(), io::Error> {
                                 info.lock().unwrap().clear();
                                 selected = 0;
                                 if query.as_bytes().len() > 1 {
-                                    let terminal = terminal.clone();
                                     let mode = modemutex.clone();
                                     let results = results.clone();
                                     let command = command.clone();
@@ -391,7 +396,11 @@ async fn main() -> Result<(), io::Error> {
                                         search_thread.abort();
                                     }
                                     _search_thread = Some(tokio::spawn(async move {
-                                        terminal.lock().unwrap().set_cursor(2, 4).unwrap();
+                                        {
+                                            *error_msg.lock().unwrap() =
+                                                "Searching for packages...";
+                                            redraw.store(true, Ordering::SeqCst);
+                                        }
                                         let packages = search(&query, &command).await;
 
                                         let mut results = results.lock().unwrap();
@@ -572,10 +581,12 @@ async fn main() -> Result<(), io::Error> {
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                                 'g' => {
+                                    info.lock().unwrap().clear();
                                     selected = 0;
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                                 'G' => {
+                                    info.lock().unwrap().clear();
                                     selected = results.lock().unwrap().len() - 1;
                                     redraw.store(true, Ordering::SeqCst);
                                 }
@@ -702,7 +713,7 @@ async fn get_info(
         cmd.arg("-Qi");
     } else {
         cmd.arg("-Si");
-        sleep(Duration::from_millis(300)).await;
+        sleep(Duration::from_millis(200)).await;
     };
     cmd.arg(query);
 
