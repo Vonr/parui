@@ -48,7 +48,8 @@ async fn main() -> Result<(), io::Error> {
     let mut query = String::new();
     let results = Arc::new(Mutex::new(Vec::new()));
     let mode = Arc::new(Mutex::new(Mode::Insert));
-    let mut selected: usize = 0;
+    let mut current: usize = 0;
+    let mut selected = HashSet::new();
     let mut info_scroll = 0;
     let info = Arc::new(Mutex::new(Vec::new()));
     let redraw = Arc::new(AtomicBool::new(true));
@@ -94,7 +95,7 @@ async fn main() -> Result<(), io::Error> {
     }
 
     loop {
-        let mut line = selected;
+        let mut line = current;
         let size;
         {
             size = terminal.lock().unwrap().size();
@@ -105,7 +106,7 @@ async fn main() -> Result<(), io::Error> {
             }
 
             let per_page = (size.height - 5) as usize;
-            let page = selected / per_page;
+            let page = current / per_page;
             let skipped = page * per_page;
             line -= skipped;
 
@@ -117,7 +118,8 @@ async fn main() -> Result<(), io::Error> {
                     let results = results.lock().unwrap();
                     format_results(
                         &results,
-                        selected,
+                        current,
+                        &selected,
                         size.height as usize,
                         (results.len() as f32 + 1f32).log10().ceil() as usize,
                         skipped,
@@ -138,10 +140,10 @@ async fn main() -> Result<(), io::Error> {
                         search_thread.abort();
                     }
                     _search_thread = Some(tokio::spawn(async move {
-                        let query = results.lock().unwrap()[selected].clone();
+                        let query = results.lock().unwrap()[current].clone();
                         let query = &query;
 
-                        let newinfo = get_info(query, selected, installed_cache, &command).await;
+                        let newinfo = get_info(query, current, installed_cache, &command).await;
                         *info.lock().unwrap() = newinfo;
                         redraw.store(true, Ordering::SeqCst);
                     }))
@@ -237,34 +239,25 @@ async fn main() -> Result<(), io::Error> {
 
                         let info = info.lock().unwrap();
                         let no_info = info.is_empty();
-                        let is_installed = installed_cache.lock().unwrap().contains(&selected);
                         let area = Rect {
                             x: size.width / 2 + 2,
                             y: 5,
                             width: size.width / 2 - 5,
-                            height: 1 + no_info as u16 * 2 + is_installed as u16,
+                            height: 2 + no_info as u16 * 2,
                         };
                         let actions = Paragraph::new({
-                            let mut actions = Vec::new();
-                            if is_installed {
-                                actions.push(Spans::from(Span::styled(
-                                    "Press ENTER again to reinstall this package",
+                            let mut actions = vec![
+                                Spans::from(Span::styled(
+                                    "Press ENTER to (re)install selected packages",
                                     Style::default()
                                         .fg(Color::Green)
                                         .add_modifier(Modifier::BOLD),
-                                )));
-                                actions.push(Spans::from(Span::styled(
-                                    "Press Shift-R to uninstall this package".to_owned(),
+                                )),
+                                Spans::from(Span::styled(
+                                    "Press Shift-R to uninstall selected packages".to_owned(),
                                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                                )));
-                            } else {
-                                actions.push(Spans::from(Span::styled(
-                                    "Press ENTER again to install this package",
-                                    Style::default()
-                                        .fg(Color::Green)
-                                        .add_modifier(Modifier::BOLD),
-                                )));
-                            }
+                                )),
+                            ];
                             if no_info {
                                 actions.push(Spans::default());
                                 actions.push(Spans::from(Span::styled(
@@ -279,9 +272,9 @@ async fn main() -> Result<(), io::Error> {
 
                         let area = Rect {
                             x: size.width / 2 + 2,
-                            y: 7 + is_installed as u16 - no_info as u16,
+                            y: 8 - no_info as u16,
                             width: size.width / 2 - 5,
-                            height: size.height - 9 - (no_info || is_installed) as u16,
+                            height: size.height - 10 - no_info as u16,
                         };
 
                         let info = Paragraph::new(info.to_vec())
@@ -313,7 +306,7 @@ async fn main() -> Result<(), io::Error> {
                         Mode::Insert => match k.code {
                             KeyCode::Esc => {
                                 if !results.lock().unwrap().is_empty() {
-                                    selected = 0;
+                                    current = 0;
                                     redraw.store(true, Ordering::SeqCst);
                                     *mode = Mode::Select;
                                 }
@@ -384,7 +377,7 @@ async fn main() -> Result<(), io::Error> {
                                 installed_cache.lock().unwrap().clear();
                                 cached_pages.clear();
                                 info.lock().unwrap().clear();
-                                selected = 0;
+                                current = 0;
                                 if query.as_bytes().len() > 1 {
                                     let mode = modemutex.clone();
                                     let results = results.clone();
@@ -432,11 +425,11 @@ async fn main() -> Result<(), io::Error> {
                                         redraw.store(true, Ordering::SeqCst);
                                     }
                                 } else {
-                                    if selected > 0 {
-                                        selected -= 1;
+                                    if current > 0 {
+                                        current -= 1;
                                         info.lock().unwrap().clear();
                                     } else {
-                                        selected = results.lock().unwrap().len() - 1;
+                                        current = results.lock().unwrap().len() - 1;
                                         info.lock().unwrap().clear();
                                     }
                                     redraw.store(true, Ordering::SeqCst);
@@ -450,11 +443,11 @@ async fn main() -> Result<(), io::Error> {
                                     }
                                 } else {
                                     let result_count = results.lock().unwrap().len();
-                                    if result_count > 1 && selected < result_count - 1 {
-                                        selected += 1;
+                                    if result_count > 1 && current < result_count - 1 {
+                                        current += 1;
                                         info.lock().unwrap().clear();
                                     } else {
-                                        selected = 0;
+                                        current = 0;
                                         info.lock().unwrap().clear();
                                     }
                                     redraw.store(true, Ordering::SeqCst);
@@ -463,10 +456,10 @@ async fn main() -> Result<(), io::Error> {
                             KeyCode::Left => {
                                 let results_count = results.lock().unwrap().len();
                                 if results_count > per_page {
-                                    if selected >= per_page {
-                                        selected -= per_page;
+                                    if current >= per_page {
+                                        current -= per_page;
                                     } else {
-                                        selected = results_count - 1;
+                                        current = results_count - 1;
                                     }
                                     info.lock().unwrap().clear();
                                     redraw.store(true, Ordering::SeqCst);
@@ -475,12 +468,12 @@ async fn main() -> Result<(), io::Error> {
                             KeyCode::Right => {
                                 let results = results.lock().unwrap();
                                 if results.len() > per_page {
-                                    if selected == results.len() - 1 {
-                                        selected = 0;
-                                    } else if selected + per_page > results.len() - 1 {
-                                        selected = results.len() - 1;
+                                    if current == results.len() - 1 {
+                                        current = 0;
+                                    } else if current + per_page > results.len() - 1 {
+                                        current = results.len() - 1;
                                     } else {
-                                        selected += per_page;
+                                        current += per_page;
                                     }
                                     info.lock().unwrap().clear();
                                     redraw.store(true, Ordering::SeqCst);
@@ -500,11 +493,11 @@ async fn main() -> Result<(), io::Error> {
                                         }
                                     } else {
                                         let result_count = results.lock().unwrap().len();
-                                        if result_count > 1 && selected < result_count - 1 {
-                                            selected += 1;
+                                        if result_count > 1 && current < result_count - 1 {
+                                            current += 1;
                                             info.lock().unwrap().clear();
                                         } else {
-                                            selected = 0;
+                                            current = 0;
                                             info.lock().unwrap().clear();
                                         }
                                         redraw.store(true, Ordering::SeqCst);
@@ -517,11 +510,11 @@ async fn main() -> Result<(), io::Error> {
                                             redraw.store(true, Ordering::SeqCst);
                                         }
                                     } else {
-                                        if selected > 0 {
-                                            selected -= 1;
+                                        if current > 0 {
+                                            current -= 1;
                                             info.lock().unwrap().clear();
                                         } else {
-                                            selected = results.lock().unwrap().len() - 1;
+                                            current = results.lock().unwrap().len() - 1;
                                             info.lock().unwrap().clear();
                                         }
                                         redraw.store(true, Ordering::SeqCst);
@@ -530,10 +523,10 @@ async fn main() -> Result<(), io::Error> {
                                 'h' => {
                                     let results_count = results.lock().unwrap().len();
                                     if results_count > per_page {
-                                        if selected >= per_page {
-                                            selected -= per_page;
+                                        if current >= per_page {
+                                            current -= per_page;
                                         } else {
-                                            selected = results_count - 1;
+                                            current = results_count - 1;
                                         }
                                         info.lock().unwrap().clear();
                                         redraw.store(true, Ordering::SeqCst);
@@ -542,16 +535,24 @@ async fn main() -> Result<(), io::Error> {
                                 'l' => {
                                     let results = results.lock().unwrap();
                                     if results.len() > per_page {
-                                        if selected == results.len() - 1 {
-                                            selected = 0;
-                                        } else if selected + per_page > results.len() - 1 {
-                                            selected = results.len() - 1;
+                                        if current == results.len() - 1 {
+                                            current = 0;
+                                        } else if current + per_page > results.len() - 1 {
+                                            current = results.len() - 1;
                                         } else {
-                                            selected += per_page;
+                                            current += per_page;
                                         }
                                         info.lock().unwrap().clear();
                                         redraw.store(true, Ordering::SeqCst);
                                     }
+                                }
+                                ' ' => {
+                                    if selected.contains(&current) {
+                                        selected.remove(&current);
+                                    } else {
+                                        selected.insert(current);
+                                    }
+                                    redraw.store(true, Ordering::SeqCst);
                                 }
                                 'q' => {
                                     disable_raw_mode()?;
@@ -577,21 +578,40 @@ async fn main() -> Result<(), io::Error> {
 
                                         return Ok(());
                                     }
-                                    query.push(c);
+                                    selected.clear();
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                                 'g' => {
                                     info.lock().unwrap().clear();
-                                    selected = 0;
+                                    current = 0;
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                                 'G' => {
                                     info.lock().unwrap().clear();
-                                    selected = results.lock().unwrap().len() - 1;
+                                    current = results.lock().unwrap().len() - 1;
                                     redraw.store(true, Ordering::SeqCst);
                                 }
                                 'R' => {
-                                    if installed_cache.lock().unwrap().contains(&selected) {
+                                    if installed_cache.lock().unwrap().contains(&current) {
+                                        let mut has_any = false;
+                                        let mut cmd = std::process::Command::new(&command);
+                                        cmd.arg("-R");
+                                        if selected.is_empty() {
+                                            cmd.arg(&(results.lock().unwrap()[current]));
+                                            has_any = true;
+                                        } else {
+                                            for i in selected.iter().filter(|i| {
+                                                installed_cache.lock().unwrap().contains(i)
+                                            }) {
+                                                cmd.arg(&(results.lock().unwrap()[*i]));
+                                                has_any = true;
+                                            }
+                                        }
+
+                                        if !has_any {
+                                            continue;
+                                        }
+
                                         disable_raw_mode()?;
                                         let mut terminal = terminal.lock().unwrap();
                                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -599,8 +619,6 @@ async fn main() -> Result<(), io::Error> {
                                         terminal.clear()?;
                                         terminal.set_cursor(0, 0)?;
                                         terminal.show_cursor()?;
-                                        let mut cmd = std::process::Command::new(command);
-                                        cmd.arg("-R").arg(&(results.lock().unwrap()[selected]));
                                         cmd.exec();
 
                                         return Ok(());
@@ -618,7 +636,14 @@ async fn main() -> Result<(), io::Error> {
                                 terminal.set_cursor(0, 0)?;
                                 terminal.show_cursor()?;
                                 let mut cmd = std::process::Command::new(command);
-                                cmd.args(["--rebuild", "-S", &(results.lock().unwrap()[selected])]);
+                                cmd.args(["--rebuild", "-S"]);
+                                if selected.is_empty() {
+                                    cmd.arg(&(results.lock().unwrap()[current]));
+                                } else {
+                                    for i in selected.iter() {
+                                        cmd.arg(&(results.lock().unwrap()[*i]));
+                                    }
+                                }
                                 cmd.exec();
 
                                 return Ok(());
@@ -642,7 +667,8 @@ async fn search(query: &str, command: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 async fn format_results(
     lines: &[String],
-    selected: usize,
+    current: usize,
+    selected: &HashSet<usize>,
     height: usize,
     pad_to: usize,
     skip: usize,
@@ -679,24 +705,33 @@ async fn format_results(
         .map(|(i, line)| {
             let index = i + skip + 1;
             let index_string = " ".to_string() + &index.to_string();
-            Spans::from(vec![
+            let mut spans = vec![
                 Span::styled(index_string, index_style),
                 Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
                 Span::styled(
                     line.clone(),
                     if installed_cache.contains(&(i + skip)) {
-                        if selected == index - 1 {
+                        if current == index - 1 {
                             installed_selected_style
                         } else {
                             installed_style
                         }
-                    } else if selected == index - 1 {
+                    } else if current == index - 1 {
                         uninstalled_selected_style
                     } else {
                         uninstalled_style
                     },
                 ),
-            ])
+            ];
+            if selected.contains(&(i + skip)) {
+                spans.push(Span::styled(
+                    " !",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            Spans::from(spans)
         })
         .collect()
 }
@@ -837,7 +872,7 @@ fn print_help() {
             "       i:",
             "           Enter insert mode",
             "       <Return>:",
-            "           Find info or install",
+            "           Install selected packages",
             "       <C-j>, <C-Down>:",
             "           Move info one row down",
             "       <C-k>, <C-Up>:",
@@ -850,8 +885,12 @@ fn print_help() {
             "           Move one row up",
             "       l, <Right>:",
             "           Move one page forwards",
+            "       <Space>:",
+            "           Select/deselect package",
+            "       c:",
+            "           Clear selections",
             "       <S-R>:",
-            "           Remove installed package",
+            "           Remove selected packages",
             "       q:",
             "           Exit parui",
         ]
