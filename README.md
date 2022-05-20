@@ -47,4 +47,5 @@ parui adopts vim-like keybinds.
 ![Start Screen](images/start.png)
 ![Info](images/info.png)
 ![Info Scrolling](images/info_scrolling.png)
+![Selections](images/selections.png)
 
