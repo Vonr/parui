@@ -1,20 +1,18 @@
 use std::collections::HashSet;
-use std::env::Args;
 use std::os::unix::prelude::CommandExt;
-use std::process::exit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{env, io};
 
+use config::Config;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use naive_opt::Search;
-use tokio::process::Command;
-use tokio::time::sleep;
+use interface::{format_results, get_info, search};
+use mode::Mode;
 use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
 use tui::{
@@ -25,15 +23,9 @@ use tui::{
     Terminal,
 };
 
-enum Mode {
-    Insert,
-    Select,
-}
-
-struct Config {
-    query: Option<String>,
-    command: String,
-}
+mod config;
+mod interface;
+mod mode;
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
@@ -658,159 +650,6 @@ async fn main() -> Result<(), io::Error> {
     }
 }
 
-async fn search(query: &str, command: &str) -> String {
-    let mut cmd = Command::new(command);
-    cmd.args(["--topdown", "-Ssq", query]);
-    cmd_output(cmd).await
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn format_results(
-    lines: &[String],
-    current: usize,
-    selected: &HashSet<usize>,
-    height: usize,
-    pad_to: usize,
-    skip: usize,
-    installed_cache: &mut HashSet<usize>,
-    cached_pages: &mut HashSet<usize>,
-    command: &str,
-) -> Vec<Spans<'static>> {
-    let index_style = Style::default().fg(Color::Gray);
-    let installed_style = Style::default()
-        .fg(Color::Green)
-        .add_modifier(Modifier::BOLD);
-    let installed_selected_style = Style::default()
-        .bg(Color::Red)
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD);
-    let uninstalled_style = Style::default()
-        .fg(Color::LightBlue)
-        .add_modifier(Modifier::BOLD);
-    let uninstalled_selected_style = Style::default()
-        .bg(Color::Red)
-        .fg(Color::Blue)
-        .add_modifier(Modifier::BOLD);
-
-    let lines: Vec<String> = lines.iter().skip(skip).take(height - 5).cloned().collect();
-    if lines.is_empty() {
-        return vec![Spans::default()];
-    }
-
-    is_installed(&lines, skip, installed_cache, cached_pages, command).await;
-
-    lines
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            let index = i + skip + 1;
-            let index_string = " ".to_string() + &index.to_string();
-            let mut spans = vec![
-                Span::styled(index_string, index_style),
-                Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
-                Span::styled(
-                    line.clone(),
-                    if installed_cache.contains(&(i + skip)) {
-                        if current == index - 1 {
-                            installed_selected_style
-                        } else {
-                            installed_style
-                        }
-                    } else if current == index - 1 {
-                        uninstalled_selected_style
-                    } else {
-                        uninstalled_style
-                    },
-                ),
-            ];
-            if selected.contains(&(i + skip)) {
-                spans.push(Span::styled(
-                    " !",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-            Spans::from(spans)
-        })
-        .collect()
-}
-
-async fn get_info(
-    query: &String,
-    index: usize,
-    installed_cache: Arc<Mutex<HashSet<usize>>>,
-    command: &str,
-) -> Vec<Spans<'static>> {
-    let mut cmd = Command::new(command);
-
-    if installed_cache.lock().unwrap().contains(&index) {
-        cmd.arg("-Qi");
-    } else {
-        cmd.arg("-Si");
-        sleep(Duration::from_millis(200)).await;
-    };
-    cmd.arg(query);
-
-    let output = cmd_output(cmd).await;
-
-    let mut info = Vec::with_capacity(output.lines().count());
-    for line in output.lines().map(|c| c.to_owned()) {
-        if !line.starts_with(' ') {
-            if let Some((key, value)) = line.split_once(':') {
-                info.push(Spans::from(vec![
-                    Span::styled(
-                        key.to_owned() + ":",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(value.to_owned()),
-                ]));
-            }
-        } else {
-            info.push(Spans::from(Span::raw(line.to_owned())));
-        }
-    }
-
-    info
-}
-
-async fn is_installed(
-    queries: &[String],
-    skip: usize,
-    installed_cache: &mut HashSet<usize>,
-    cached_pages: &mut HashSet<usize>,
-    command: &str,
-) {
-    if cached_pages.contains(&skip) {
-        return;
-    }
-
-    let mut cmd = Command::new(command);
-    cmd.arg("-Qq");
-    cmd.args(queries);
-
-    let output = cmd_output(cmd).await;
-
-    let mut index;
-    for (i, query) in queries.iter().enumerate() {
-        index = i + skip;
-        let is_installed = output.includes(&(query.to_owned() + "\n"));
-        if is_installed {
-            installed_cache.insert(index);
-        }
-    }
-    cached_pages.insert(skip);
-}
-
-async fn cmd_output(mut cmd: Command) -> String {
-    if let Ok(output) = cmd.output().await {
-        if let Ok(output) = String::from_utf8(output.stdout) {
-            return output;
-        }
-    }
-    String::new()
-}
-
 fn last_word_end(bytes: &[u8], pos: u16) -> usize {
     let mut boundary = 0;
     for (i, c) in bytes.iter().take(pos as usize).enumerate() {
@@ -839,101 +678,5 @@ fn next_word_start(bytes: &[u8], pos: u16) -> usize {
         bytes.len()
     } else {
         boundary
-    }
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        [
-            "Usage: parui [OPTION]... QUERY",
-            "Search for QUERY in the Arch User Repository.",
-            "Example:",
-            "    parui -p=yay rustup\n",
-            "Options:",
-            "    -p=<PROGRAM>",
-            "        Selects program used to search AUR",
-            "        Not guaranteed to work well",
-            "        Default: paru",
-            "    -h",
-            "        Print this help and exit",
-            "Keybinds:",
-            "    Both:",
-            "       <Escape>",
-            "           Switch Modes",
-            "       <C-c>",
-            "           Exit parui",
-            "   Insert:",
-            "       <Return>",
-            "           Search for query",
-            "       <C-w>",
-            "           Remove previous word",
-            "   Select:",
-            "       i:",
-            "           Enter insert mode",
-            "       <Return>:",
-            "           Install selected packages",
-            "       <C-j>, <C-Down>:",
-            "           Move info one row down",
-            "       <C-k>, <C-Up>:",
-            "           Move info one row up",
-            "       h, <Left>:",
-            "           Move one page back",
-            "       j, <Down>:",
-            "           Move one row down",
-            "       k, <Up>:",
-            "           Move one row up",
-            "       l, <Right>:",
-            "           Move one page forwards",
-            "       <Space>:",
-            "           Select/deselect package",
-            "       c:",
-            "           Clear selections",
-            "       <S-R>:",
-            "           Remove selected packages",
-            "       q:",
-            "           Exit parui",
-        ]
-        .join("\n")
-    );
-    exit(0);
-}
-
-impl Config {
-    pub fn new(args: Args) -> Self {
-        let mut query: Option<String> = None;
-        let mut command = String::from("paru");
-
-        for arg in args.skip(1) {
-            match arg.as_str() {
-                "-h" | "--help" => print_help(),
-                _ => {
-                    if arg.starts_with("-p=") {
-                        command = arg.clone().chars().skip(3).collect::<String>();
-                    } else if let Some(q) = query {
-                        query = Some(q + " " + &arg);
-                    } else {
-                        query = Some(arg.to_owned());
-                    }
-                }
-            }
-        }
-
-        if let Err(err) = std::process::Command::new(command.as_str())
-            .arg("-h")
-            .output()
-        {
-            match err.kind() {
-                std::io::ErrorKind::NotFound => {
-                    eprintln!("parui: {}: command not found", command);
-                }
-                _ => {
-                    eprintln!("parui: {}: {}", command, err);
-                }
-            }
-            exit(1);
-        }
-
-        Self { query, command }
     }
 }
