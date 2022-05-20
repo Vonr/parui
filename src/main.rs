@@ -370,6 +370,8 @@ async fn main() -> Result<(), io::Error> {
                                 cached_pages.clear();
                                 info.lock().unwrap().clear();
                                 current = 0;
+                                redraw.store(true, Ordering::SeqCst);
+                                results.lock().unwrap().clear();
                                 if query.as_bytes().len() > 1 {
                                     let mode = modemutex.clone();
                                     let results = results.clone();
@@ -384,12 +386,10 @@ async fn main() -> Result<(), io::Error> {
                                         {
                                             *error_msg.lock().unwrap() =
                                                 "Searching for packages...";
-                                            redraw.store(true, Ordering::SeqCst);
                                         }
                                         let packages = search(&query, &command).await;
 
                                         let mut results = results.lock().unwrap();
-                                        results.clear();
                                         packages.lines().for_each(|s| {
                                             results.push(s.to_owned());
                                         });
@@ -403,6 +403,8 @@ async fn main() -> Result<(), io::Error> {
                                         redraw.store(true, Ordering::SeqCst);
                                     }));
                                 } else {
+                                    let mut results = results.lock().unwrap();
+                                    results.clear();
                                     *error_msg.lock().unwrap() =
                                         "Query should be at least 2 characters long";
                                 }
