@@ -19,7 +19,7 @@ use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
 use tui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Rect},
     text::{Span, Spans},
     widgets::{Block, Borders, Clear, Paragraph},
     Terminal,
@@ -149,10 +149,6 @@ async fn main() -> Result<(), io::Error> {
                 }
 
                 terminal.draw(|s| {
-                    let chunks = Layout::default()
-                        .constraints([Constraint::Min(3), Constraint::Percentage(100)].as_ref())
-                        .split(size);
-
                     let search_color;
                     let results_color;
                     let bold_search_style;
@@ -180,7 +176,13 @@ async fn main() -> Result<(), io::Error> {
                             .border_type(BorderType::Rounded),
                     )
                     .alignment(Alignment::Left);
-                    s.render_widget(para, chunks[0]);
+                    let area = Rect {
+                        x: 0,
+                        y: 0,
+                        width: size.width,
+                        height: 3,
+                    };
+                    s.render_widget(para, area);
 
                     let para = Paragraph::new(formatted_results)
                         .block(
@@ -190,7 +192,13 @@ async fn main() -> Result<(), io::Error> {
                                 .border_type(BorderType::Rounded),
                         )
                         .alignment(Alignment::Left);
-                    s.render_widget(para, chunks[1]);
+                    let area = Rect {
+                        x: 0,
+                        y: 3,
+                        width: size.width,
+                        height: size.height - 3,
+                    };
+                    s.render_widget(para, area);
 
                     if results.lock().unwrap().is_empty() {
                         let area = Rect {
