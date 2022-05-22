@@ -8,7 +8,7 @@ readme = "README.md"
 homepage = "https://github.com/Vonr/parui"
 repository = "https://github.com/Vonr/parui"
 keywords = ["tui", "terminal", "frontend", "paru"]
-include = ["src/main.rs", "README.md"]
+include = ["src/**/*", "README.md"]
 
 [profile.release]
 lto = true
