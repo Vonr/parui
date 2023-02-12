@@ -30,7 +30,7 @@ parui adopts vim-like keybinds.
 | \<C-w\>             | Insert | Removes previous word     |
 | \<C-c\>             | Both   | Exits parui               |
 | \<Escape\>          | Both   | Switch Modes              |
-| i                   | Select | Enter Insert Mode         |
+| i, /                | Select | Enter Insert Mode         |
 | \<Return\>          | Select | Install selected packages |
 | \<C-j\>, \<C-Down\> | Select | Moves info one row down   |
 | \<C-k\>, \<C-Up\>   | Select | Moves info one row up     |

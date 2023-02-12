@@ -35,10 +35,10 @@ impl Config {
         {
             match err.kind() {
                 std::io::ErrorKind::NotFound => {
-                    eprintln!("parui: {}: command not found", command);
+                    eprintln!("parui: {command}: command not found");
                 }
                 _ => {
-                    eprintln!("parui: {}: {}", command, err);
+                    eprintln!("parui: {command}: {err}");
                 }
             }
             exit(1);
