@@ -8,7 +8,7 @@ use tui::{
     text::{Span, Spans},
 };
 
-pub async fn list() -> Vec<String> {
+pub async fn list(show_aur: bool) -> Vec<String> {
     let mut cmd = Command::new("pacman");
     cmd.arg("-Slq");
 
@@ -18,10 +18,12 @@ pub async fn list() -> Vec<String> {
     let aur_out = tokio::task::spawn_blocking(move || {
         let mut buf = Vec::new();
 
-        let Ok(req) = ureq::get("https://aur.archlinux.org/packages.gz").call() else {
-            return buf;
-        };
-        _ = req.into_reader().read_to_end(&mut buf);
+        if show_aur {
+            let Ok(req) = ureq::get("https://aur.archlinux.org/packages.gz").call() else {
+                return buf;
+            };
+            _ = req.into_reader().read_to_end(&mut buf);
+        }
         buf
     });
 

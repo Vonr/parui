@@ -72,7 +72,10 @@ async fn main() -> Result<(), io::Error> {
                 redraw.store(true, Ordering::SeqCst);
 
                 if all_packages.read().len() == 0 {
-                    std::mem::swap(&mut list().await, &mut all_packages.write());
+                    std::mem::swap(
+                        &mut list(command != "pacman").await,
+                        &mut all_packages.write(),
+                    );
                 }
 
                 if installed.read().len() == 0 {
@@ -425,7 +428,10 @@ async fn main() -> Result<(), io::Error> {
                             *error_msg.lock() = "Searching for packages...";
 
                             if all_packages.read().len() == 0 {
-                                std::mem::swap(&mut list().await, &mut all_packages.write());
+                                std::mem::swap(
+                                    &mut list(command != "pacman").await,
+                                    &mut all_packages.write(),
+                                );
                             }
 
                             is_installed(all_packages.clone(), installed.clone(), &command).await;
