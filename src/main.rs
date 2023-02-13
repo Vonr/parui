@@ -448,7 +448,7 @@ async fn main() -> Result<(), io::Error> {
                 _ => redraw.store(true, Ordering::SeqCst),
             },
             Mode::Select => match k.code {
-                KeyCode::Up => {
+                KeyCode::Up | KeyCode::Char('k') => {
                     if k.modifiers == KeyModifiers::CONTROL {
                         if info_scroll > 0 {
                             info_scroll -= 1;
@@ -464,7 +464,7 @@ async fn main() -> Result<(), io::Error> {
                         redraw.store(true, Ordering::SeqCst);
                     }
                 }
-                KeyCode::Down => {
+                KeyCode::Down | KeyCode::Char('j') => {
                     if k.modifiers == KeyModifiers::CONTROL {
                         if !info.lock().is_empty() {
                             info_scroll += 1;
@@ -481,7 +481,12 @@ async fn main() -> Result<(), io::Error> {
                         redraw.store(true, Ordering::SeqCst);
                     }
                 }
-                KeyCode::Left => {
+                KeyCode::Esc => {
+                    insert_pos = query.len() as u16;
+                    redraw.store(true, Ordering::SeqCst);
+                    mode.store(Mode::Insert, Ordering::SeqCst);
+                }
+                KeyCode::Left | KeyCode::PageUp | KeyCode::Char('h') => {
                     let shown_count = shown.read().len();
                     if shown_count > per_page {
                         if current >= per_page {
@@ -493,7 +498,7 @@ async fn main() -> Result<(), io::Error> {
                         redraw.store(true, Ordering::SeqCst);
                     }
                 }
-                KeyCode::Right => {
+                KeyCode::Right | KeyCode::PageDown | KeyCode::Char('l') => {
                     let shown = shown.read();
                     if shown.len() > per_page {
                         if current == shown.len() - 1 {
@@ -507,71 +512,17 @@ async fn main() -> Result<(), io::Error> {
                         redraw.store(true, Ordering::SeqCst);
                     }
                 }
-                KeyCode::Esc => {
-                    insert_pos = query.len() as u16;
+                KeyCode::Home | KeyCode::Char('g') if current != 0 => {
+                    info.lock().clear();
+                    current = 0;
                     redraw.store(true, Ordering::SeqCst);
-                    mode.store(Mode::Insert, Ordering::SeqCst);
+                }
+                KeyCode::End | KeyCode::Char('G') if current != shown.read().len() - 1 => {
+                    info.lock().clear();
+                    current = shown.read().len() - 1;
+                    redraw.store(true, Ordering::SeqCst);
                 }
                 KeyCode::Char(c) => match c {
-                    'j' => {
-                        if k.modifiers == KeyModifiers::CONTROL {
-                            if !info.lock().is_empty() {
-                                info_scroll += 1;
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        } else {
-                            let result_count = shown.read().len();
-                            if result_count > 1 && current < result_count - 1 {
-                                current += 1;
-                            } else {
-                                current = 0;
-                            }
-                            info.lock().clear();
-                            redraw.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    'k' => {
-                        if k.modifiers == KeyModifiers::CONTROL {
-                            if info_scroll > 0 {
-                                info_scroll -= 1;
-                                redraw.store(true, Ordering::SeqCst);
-                            }
-                        } else {
-                            if current > 0 {
-                                current -= 1;
-                            } else {
-                                current = shown.read().len() - 1;
-                            }
-                            info.lock().clear();
-                            redraw.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    'h' => {
-                        let shown_count = shown.read().len();
-                        if shown_count > per_page {
-                            if current >= per_page {
-                                current -= per_page;
-                            } else {
-                                current = shown_count - 1;
-                            }
-                            info.lock().clear();
-                            redraw.store(true, Ordering::SeqCst);
-                        }
-                    }
-                    'l' => {
-                        let shown = shown.read();
-                        if shown.len() > per_page {
-                            if current == shown.len() - 1 {
-                                current = 0;
-                            } else if current + per_page > shown.len() - 1 {
-                                current = shown.len() - 1;
-                            } else {
-                                current += per_page;
-                            }
-                            info.lock().clear();
-                            redraw.store(true, Ordering::SeqCst);
-                        }
-                    }
                     ' ' => {
                         let real_current = shown.read()[current];
                         if selected.contains(&real_current) {
@@ -580,6 +531,11 @@ async fn main() -> Result<(), io::Error> {
                             selected.insert(real_current);
                         }
                         redraw.store(true, Ordering::SeqCst);
+                    }
+                    'i' | '/' => {
+                        insert_pos = query.len() as u16;
+                        redraw.store(true, Ordering::SeqCst);
+                        mode.store(Mode::Insert, Ordering::SeqCst);
                     }
                     'q' => {
                         disable_raw_mode()?;
@@ -590,33 +546,14 @@ async fn main() -> Result<(), io::Error> {
 
                         return Ok(());
                     }
-                    'i' | '/' => {
-                        insert_pos = query.len() as u16;
-                        redraw.store(true, Ordering::SeqCst);
-                        mode.store(Mode::Insert, Ordering::SeqCst);
-                    }
-                    'c' => {
-                        if k.modifiers == KeyModifiers::CONTROL {
-                            disable_raw_mode()?;
-                            let mut terminal = terminal.lock();
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                            terminal.clear()?;
-                            terminal.set_cursor(0, 0)?;
+                    'c' if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                        disable_raw_mode()?;
+                        let mut terminal = terminal.lock();
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                        terminal.clear()?;
+                        terminal.set_cursor(0, 0)?;
 
-                            return Ok(());
-                        }
-                        selected.clear();
-                        redraw.store(true, Ordering::SeqCst);
-                    }
-                    'g' if current != 0 => {
-                        info.lock().clear();
-                        current = 0;
-                        redraw.store(true, Ordering::SeqCst);
-                    }
-                    'G' if current != shown.read().len() - 1 => {
-                        info.lock().clear();
-                        current = shown.read().len() - 1;
-                        redraw.store(true, Ordering::SeqCst);
+                        return Ok(());
                     }
                     'R' => {
                         if installed.read().contains(&current) {
