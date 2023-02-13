@@ -148,7 +148,8 @@ async fn main() -> Result<(), io::Error> {
                         all_packages[shown.read()[current]].clone()
                     };
 
-                    let newinfo = get_info(&query, current, installed, &command).await;
+                    let real_index = shown.read()[current];
+                    let newinfo = get_info(&query, real_index, installed, &command).await;
                     *info.lock() = newinfo;
                     redraw.store(true, Ordering::SeqCst);
                 }))

@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "parui"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "atomic",
  "crossterm 0.26.0",
