@@ -72,18 +72,17 @@ async fn main() -> Result<(), io::Error> {
                 redraw.store(true, Ordering::SeqCst);
 
                 if all_packages.read().len() == 0 {
-                    let mut tmp = list(&command).await;
-                    all_packages.write().append(&mut tmp);
+                    std::mem::swap(&mut list().await, &mut all_packages.write());
                 }
 
                 if installed.read().len() == 0 {
                     is_installed(all_packages.clone(), installed.clone(), &command).await;
                 }
 
-                shown.write().clear();
-                shown
-                    .write()
-                    .append(&mut search(&query, &all_packages.read()));
+                std::mem::swap(
+                    &mut search(&query, &all_packages.read()),
+                    &mut shown.write(),
+                );
             }
 
             if !shown.read().is_empty() {
@@ -191,19 +190,24 @@ async fn main() -> Result<(), io::Error> {
                 };
                 s.render_widget(para, area);
 
-                let para = Paragraph::new(formatted_shown)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(shown_color))
-                            .border_type(BorderType::Rounded),
-                    )
-                    .alignment(Alignment::Left);
+                let para = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(shown_color))
+                    .border_type(BorderType::Rounded);
                 let area = Rect {
                     x: 0,
                     y: 3,
                     width: size.width,
                     height: size.height - 3,
+                };
+                s.render_widget(para, area);
+
+                let para = Paragraph::new(formatted_shown).alignment(Alignment::Left);
+                let area = Rect {
+                    x: 2,
+                    y: 4,
+                    width: size.width - 2,
+                    height: size.height - 4,
                 };
                 s.render_widget(para, area);
 
@@ -243,8 +247,11 @@ async fn main() -> Result<(), io::Error> {
                     s.render_widget(Clear, area);
                     s.render_widget(border, area);
 
-                    let info = info.lock();
-                    let no_info = info.is_empty();
+                    let (info, no_info) = {
+                        let info_lock = info.lock();
+                        (info_lock.clone(), info_lock.is_empty())
+                    };
+
                     let area = Rect {
                         x: size.width / 2 + 2,
                         y: 5,
@@ -293,7 +300,7 @@ async fn main() -> Result<(), io::Error> {
                         height: size.height - 10 - no_info as u16,
                     };
 
-                    let info = Paragraph::new(info.to_vec())
+                    let info = Paragraph::new(info.clone())
                         .wrap(Wrap { trim: false })
                         .scroll((info_scroll as u16, 0));
                     s.render_widget(info, area);
@@ -417,16 +424,15 @@ async fn main() -> Result<(), io::Error> {
                             *error_msg.lock() = "Searching for packages...";
 
                             if all_packages.read().len() == 0 {
-                                let mut tmp = list(&command).await;
-                                all_packages.write().append(&mut tmp);
+                                std::mem::swap(&mut list().await, &mut all_packages.write());
                             }
 
                             is_installed(all_packages.clone(), installed.clone(), &command).await;
 
-                            shown.write().clear();
-                            shown
-                                .write()
-                                .append(&mut search(&query, &all_packages.read()));
+                            std::mem::swap(
+                                &mut search(&query, &all_packages.read()),
+                                &mut shown.write(),
+                            );
                         }
 
                         if !shown.read().is_empty() {

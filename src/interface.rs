@@ -2,20 +2,62 @@ use std::{sync::Arc, time::Duration};
 
 use nohash_hasher::IntSet;
 use parking_lot::RwLock;
-use tokio::{process::Command, time::sleep};
+use tokio::{join, process::Command, time::sleep};
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
 };
 
-pub async fn list(command: &str) -> Vec<String> {
-    let mut cmd = Command::new(command);
+pub async fn list() -> Vec<String> {
+    let mut cmd = Command::new("pacman");
     cmd.arg("-Slq");
-    cmd_output(cmd)
-        .await
-        .lines()
-        .map(ToOwned::to_owned)
-        .collect()
+
+    let mut out = Vec::new();
+
+    let pacman_out = async move { cmd.output().await.map(|o| o.stdout) };
+    let aur_out = tokio::task::spawn_blocking(move || {
+        let mut buf = Vec::new();
+
+        // This is a HTTP URL so that we don't have to bring in the tls crate, which increases
+        // compile times by up to 10 seconds on my very decent machine.
+        //
+        // This may not sound like a big deal, but I'd like to reduce compile times for people
+        // installing my software on old hardware.
+        //
+        // I believe this traadeoff is okay, as a MITM can not exploit this to perform anything
+        // malicious other than report false information about packages to parui, or crash it.
+        let Ok(req) = ureq::get("http://aur.archlinux.org/packages.gz").call() else {
+            return buf;
+        };
+        _ = req.into_reader().read_to_end(&mut buf);
+        buf
+    });
+
+    let (pacman_out, aur_out) = join!(pacman_out, aur_out);
+
+    let Ok(pacman_out) = pacman_out else {
+        return out;
+    };
+
+    let Ok(aur_out) = aur_out else {
+        return out;
+    };
+
+    let mut buf = Vec::new();
+    for byte in pacman_out.into_iter().chain(aur_out.into_iter()) {
+        if byte != b'\n' {
+            buf.push(byte);
+            continue;
+        }
+
+        if let Ok(s) = std::str::from_utf8(&buf) {
+            out.push(s.to_owned());
+        }
+
+        buf.clear();
+    }
+
+    out
 }
 
 pub fn search(query: &str, packages: &[String]) -> Vec<usize> {
@@ -33,7 +75,7 @@ pub fn search(query: &str, packages: &[String]) -> Vec<usize> {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn format_results(
+pub async fn format_results<'a>(
     packages: Arc<RwLock<Vec<String>>>,
     shown: Arc<RwLock<Vec<usize>>>,
     current: usize,
@@ -42,7 +84,7 @@ pub async fn format_results(
     pad_to: usize,
     skip: usize,
     installed: Arc<RwLock<IntSet<usize>>>,
-) -> Vec<Spans<'static>> {
+) -> Vec<Spans<'a>> {
     let index_style = Style::default().fg(Color::Gray);
     let installed_style = Style::default()
         .fg(Color::Green)
@@ -71,18 +113,20 @@ pub async fn format_results(
     }
 
     names
-        .iter()
+        .into_iter()
         .enumerate()
         .map(|(i, line)| {
             let real_index = shown.read()[skip + i];
 
             let index = i + skip + 1;
-            let index_string = " ".to_string() + &index.to_string();
             let mut spans = vec![
-                Span::styled(index_string, index_style),
-                Span::raw(" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1)),
                 Span::styled(
-                    line.clone(),
+                    index.to_string()
+                        + &" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1),
+                    index_style,
+                ),
+                Span::styled(
+                    line,
                     if installed.read().contains(&real_index) {
                         if current == index - 1 {
                             installed_selected_style
@@ -98,7 +142,7 @@ pub async fn format_results(
             ];
             if selected.contains(&real_index) {
                 spans.push(Span::styled(
-                    " !",
+                    "!",
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
@@ -109,12 +153,12 @@ pub async fn format_results(
         .collect()
 }
 
-pub async fn get_info(
+pub async fn get_info<'a>(
     query: &String,
     index: usize,
     installed_cache: Arc<RwLock<IntSet<usize>>>,
     command: &str,
-) -> Vec<Spans<'static>> {
+) -> Vec<Spans<'a>> {
     let mut cmd = Command::new(command);
 
     if installed_cache.read().contains(&index) {
@@ -131,7 +175,7 @@ pub async fn get_info(
     let lines = output.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
 
     let mut info = Vec::with_capacity(lines.len());
-    for mut line in lines.into_iter() {
+    for mut line in lines {
         if !line.starts_with(' ') {
             if let Some(idx) = line.find(':') {
                 let value = line.split_off(idx + 1);
@@ -141,7 +185,7 @@ pub async fn get_info(
                 ]));
             }
         } else {
-            info.push(Spans::from(Span::raw(line)));
+            info.push(Spans::from(line));
         }
     }
 
@@ -156,9 +200,14 @@ pub async fn is_installed(
     let mut cmd = Command::new(command);
     cmd.arg("-Qq");
 
-    for package in cmd_output(cmd).await.lines() {
-        if let Some(idx) = packages.read().iter().position(|o| o == package) {
-            installed.write().insert(idx);
+    let output = cmd_output(cmd).await;
+    let mut lines = output.lines().collect::<Vec<_>>();
+    let mut installed = installed.write();
+
+    for (idx, package) in packages.read().iter().enumerate() {
+        if let Some(line_idx) = lines.iter().position(|l| l == package) {
+            lines.remove(line_idx);
+            installed.insert(idx);
         }
     }
 }
