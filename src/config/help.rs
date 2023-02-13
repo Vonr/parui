@@ -33,14 +33,18 @@ Keybinds:
            Move info one row down
        <C-k>, <C-Up>
            Move info one row up
-       h, <Left>
+       h, <Left>, <PgUp>
            Move one page back
        j, <Down>
            Move one row down
        k, <Up>
            Move one row up
-       l, <Right>
+       l, <Right>, <PgDn>
            Move one page forwards
+       g, <Home>
+           Go to start
+       G, <End>
+           Go to end
        <Space>
            Select/deselect package
        c

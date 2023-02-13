@@ -24,24 +24,26 @@ Usage: parui [OPTION]... QUERY
 
 parui adopts vim-like keybinds.
 
-| Key                 | Mode   | Action                    |
-|---------------------|--------|---------------------------|
-| \<Return\>          | Insert | Search for query          |
-| \<C-w\>             | Insert | Removes previous word     |
-| \<C-c\>             | Both   | Exits parui               |
-| \<Escape\>          | Both   | Switch Modes              |
-| i, /                | Select | Enter Insert Mode         |
-| \<Return\>          | Select | Install selected packages |
-| \<C-j\>, \<C-Down\> | Select | Moves info one row down   |
-| \<C-k\>, \<C-Up\>   | Select | Moves info one row up     |
-| h, \<Left\>         | Select | Moves one page back       |
-| j, \<Down\>         | Select | Moves one row down        |
-| k, \<Up\>           | Select | Moves one row up          |
-| l, \<Right\>        | Select | Moves one page forwards   |
-| \<Space\>           | Select | Select/deselect package   |
-| c                   | Select | Clear selections          |
-| \<S-R\>             | Select | Remove selected packages  |
-| q                   | Select | Exits parui               |
+| Key                    | Mode   | Action                    |
+|------------------------|--------|---------------------------|
+| \<Return\>             | Insert | Search for query          |
+| \<C-w\>                | Insert | Removes previous word     |
+| \<C-c\>                | Both   | Exits parui               |
+| \<Escape\>             | Both   | Switch Modes              |
+| i, /                   | Select | Enter Insert Mode         |
+| \<Return\>             | Select | Install selected packages |
+| \<C-j\>, \<C-Down\>    | Select | Moves info one row down   |
+| \<C-k\>, \<C-Up\>      | Select | Moves info one row up     |
+| h, \<Left\>, \<PgUp\>  | Select | Moves one page back       |
+| j, \<Down\>            | Select | Moves one row down        |
+| k, \<Up\>              | Select | Moves one row up          |
+| l, \<Right\>, \<PgDn\> | Select | Moves one page forwards   |
+| g, \<Home\>            | Select | Go to start               |
+| G, \<End\>             | Select | Go to end                 |
+| \<Space\>              | Select | Select/deselect package   |
+| c                      | Select | Clear selections          |
+| \<S-R\>                | Select | Remove selected packages  |
+| q                      | Select | Exits parui               |
 
 ### Images
 ![Start Screen](https://user-images.githubusercontent.com/24369412/218350990-96a0f294-9612-4103-b43c-98b7ecfa2428.png)
