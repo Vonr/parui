@@ -18,15 +18,7 @@ pub async fn list() -> Vec<String> {
     let aur_out = tokio::task::spawn_blocking(move || {
         let mut buf = Vec::new();
 
-        // This is a HTTP URL so that we don't have to bring in the tls crate, which increases
-        // compile times by up to 10 seconds on my very decent machine.
-        //
-        // This may not sound like a big deal, but I'd like to reduce compile times for people
-        // installing my software on old hardware.
-        //
-        // I believe this traadeoff is okay, as a MITM can not exploit this to perform anything
-        // malicious other than report false information about packages to parui, or crash it.
-        let Ok(req) = ureq::get("http://aur.archlinux.org/packages.gz").call() else {
+        let Ok(req) = ureq::get("https://aur.archlinux.org/packages.gz").call() else {
             return buf;
         };
         _ = req.into_reader().read_to_end(&mut buf);
