@@ -316,9 +316,14 @@ async fn main() -> Result<(), io::Error> {
             continue;
         }
 
-        let Event::Key(k) = event::read()? else {
-                continue;
+        let e = event::read()?;
+
+        let Event::Key(k) = e else {
+            if matches!(e, Event::Resize(..)) {
+                redraw.store(true, Ordering::SeqCst);
             };
+            continue
+        };
 
         match mode.load(Ordering::SeqCst) {
             Mode::Insert => match k.code {
