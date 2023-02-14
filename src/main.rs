@@ -68,7 +68,12 @@ async fn main() -> Result<(), io::Error> {
         let installed = installed.clone();
         _search_thread = Some(tokio::spawn(async move {
             {
-                *error_msg.lock() = "Searching for packages...";
+                if query.is_empty() {
+                    *error_msg.lock() = "Listing packages...";
+                } else {
+                    *error_msg.lock() = "Searching for packages...";
+                }
+
                 redraw.store(true, Ordering::SeqCst);
 
                 if all_packages.read().len() == 0 {
@@ -173,6 +178,7 @@ async fn main() -> Result<(), io::Error> {
                     shown_color = Color::White;
                     bold_search_style = Style::default().fg(search_color);
                 };
+
                 let para = Paragraph::new(Spans::from(vec![
                     Span::styled(" Search: ", bold_search_style),
                     Span::styled(&*query, Style::default().fg(search_color)),
@@ -186,7 +192,7 @@ async fn main() -> Result<(), io::Error> {
                         .border_type(BorderType::Rounded),
                 )
                 .alignment(Alignment::Left);
-                let area = Rect {
+                let mut area = Rect {
                     x: 0,
                     y: 0,
                     width: size.width,
@@ -198,7 +204,7 @@ async fn main() -> Result<(), io::Error> {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(shown_color))
                     .border_type(BorderType::Rounded);
-                let area = Rect {
+                area = Rect {
                     x: 0,
                     y: 3,
                     width: size.width,
@@ -207,7 +213,7 @@ async fn main() -> Result<(), io::Error> {
                 s.render_widget(para, area);
 
                 let para = Paragraph::new(formatted_shown).alignment(Alignment::Left);
-                let area = Rect {
+                area = Rect {
                     x: 2,
                     y: 4,
                     width: size.width - 2,
@@ -238,7 +244,7 @@ async fn main() -> Result<(), io::Error> {
                     s.render_widget(Clear, area);
                     s.render_widget(no_shown, area);
                 } else {
-                    let area = Rect {
+                    area = Rect {
                         x: size.width / 2,
                         y: 4,
                         width: size.width / 2 - 1,
@@ -256,7 +262,7 @@ async fn main() -> Result<(), io::Error> {
                         (info_lock.clone(), info_lock.is_empty())
                     };
 
-                    let area = Rect {
+                    area = Rect {
                         x: size.width / 2 + 2,
                         y: 5,
                         width: size.width / 2 - 5,
@@ -297,7 +303,7 @@ async fn main() -> Result<(), io::Error> {
                     .alignment(Alignment::Left);
                     s.render_widget(actions, area);
 
-                    let area = Rect {
+                    area = Rect {
                         x: size.width / 2 + 2,
                         y: 8 - no_info as u16,
                         width: size.width / 2 - 5,

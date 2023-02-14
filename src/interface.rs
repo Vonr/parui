@@ -55,6 +55,10 @@ pub async fn list(show_aur: bool) -> Vec<String> {
 }
 
 pub fn search(query: &str, packages: &[String]) -> Vec<usize> {
+    if query.is_empty() {
+        return (0..packages.len()).collect();
+    }
+
     packages
         .iter()
         .enumerate()
@@ -65,7 +69,7 @@ pub fn search(query: &str, packages: &[String]) -> Vec<usize> {
                 None
             }
         })
-        .collect::<Vec<_>>()
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
