@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::{env, io};
 
 use atomic::Atomic;
+use compact_strings::CompactStrings;
 use config::Config;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
@@ -15,12 +16,13 @@ use interface::{format_results, get_info, is_installed, list, search};
 use mode::Mode;
 use nohash_hasher::IntSet;
 use parking_lot::{Mutex, RwLock};
+use shown::Shown;
 use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
 use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Rect},
-    text::{Span, Spans},
+    text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
     Terminal,
 };
@@ -28,9 +30,17 @@ use tui::{
 mod config;
 mod interface;
 mod mode;
+mod shown;
+
+#[cfg(feature = "dhat")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
+    #[cfg(feature = "dhat")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let args = Config::new(env::args());
     let command = args.command;
 
@@ -38,9 +48,9 @@ async fn main() -> Result<(), io::Error> {
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
-    let terminal = Arc::new(Mutex::new(Terminal::new(backend)?));
-    let mut query;
-    let shown = Arc::new(RwLock::new(Vec::new()));
+    let mut terminal = Terminal::new(backend)?;
+    let mut query = args.query.unwrap_or_default();
+    let shown = Arc::new(RwLock::new(Shown::Few(Vec::new())));
     let mode = Arc::new(Atomic::new(Mode::Insert));
     let mut current: usize = 0;
     let mut selected = IntSet::default();
@@ -49,14 +59,19 @@ async fn main() -> Result<(), io::Error> {
     let redraw = Arc::new(AtomicBool::new(true));
     let mut insert_pos;
 
-    let all_packages = Arc::new(RwLock::new(Vec::new()));
+    let all_packages = Arc::new(RwLock::new(CompactStrings::with_capacity(
+        16 * 16384,
+        16384,
+    )));
     let installed = Arc::new(RwLock::new(IntSet::default()));
     let error_msg = Arc::new(Mutex::new("Try searching for something"));
 
-    let mut _search_thread = None;
+    let shown_len = || shown.read().len().unwrap_or(all_packages.read().len());
+    let real_idx = |idx| shown.read().get(idx).unwrap_or(idx);
+
+    let mut _search_task = None;
 
     {
-        query = args.query.clone().unwrap_or_default();
         let query = query.clone();
         insert_pos = query.len() as u16;
         let mode = mode.clone();
@@ -66,32 +81,24 @@ async fn main() -> Result<(), io::Error> {
         let command = command.clone();
         let all_packages = all_packages.clone();
         let installed = installed.clone();
-        _search_thread = Some(tokio::spawn(async move {
-            {
-                if query.is_empty() {
-                    *error_msg.lock() = "Listing packages...";
-                } else {
-                    *error_msg.lock() = "Searching for packages...";
-                }
-
-                redraw.store(true, Ordering::SeqCst);
-
-                if all_packages.read().len() == 0 {
-                    std::mem::swap(
-                        &mut list(command != "pacman").await,
-                        &mut all_packages.write(),
-                    );
-                }
-
-                if installed.read().len() == 0 {
-                    is_installed(all_packages.clone(), installed.clone(), &command).await;
-                }
-
-                std::mem::swap(
-                    &mut search(&query, &all_packages.read()),
-                    &mut shown.write(),
-                );
+        _search_task = Some(tokio::spawn(async move {
+            if query.is_empty() {
+                *error_msg.lock() = "Listing packages...";
+            } else {
+                *error_msg.lock() = "Searching for packages...";
             }
+
+            redraw.store(true, Ordering::SeqCst);
+
+            if all_packages.read().is_empty() {
+                list(all_packages.clone(), command != "pacman").await;
+            }
+
+            if installed.read().is_empty() {
+                is_installed(all_packages.clone(), installed.clone()).await;
+            }
+
+            search(shown.clone(), &query, &all_packages.read());
 
             if !shown.read().is_empty() {
                 mode.store(Mode::Select, Ordering::SeqCst);
@@ -103,12 +110,12 @@ async fn main() -> Result<(), io::Error> {
     }
 
     {
-        terminal.lock().clear()?;
+        terminal.clear()?;
     }
 
     loop {
         let mut line = current;
-        let size = { terminal.lock().size() };
+        let size = terminal.size();
         let Ok(size) = size else {
             continue;
         };
@@ -123,7 +130,7 @@ async fn main() -> Result<(), io::Error> {
         line -= skipped;
 
         if redraw.swap(false, Ordering::SeqCst) {
-            let shown_len_str_len = ((shown.read().len() + 1).ilog10() + 1) as usize;
+            let shown_len_str_len = (shown_len() + 1).ilog10() as usize + 1;
 
             let formatted_shown = {
                 format_results(
@@ -139,7 +146,6 @@ async fn main() -> Result<(), io::Error> {
                 .await
             };
 
-            let mut terminal = terminal.lock();
             if info.lock().is_empty() && !shown.read().is_empty() {
                 let shown = shown.clone();
                 let command = command.clone();
@@ -147,17 +153,12 @@ async fn main() -> Result<(), io::Error> {
                 let info = info.clone();
                 let installed = installed.clone();
                 let all_packages = all_packages.clone();
-                if let Some(search_thread) = _search_thread {
+                if let Some(search_thread) = _search_task {
                     search_thread.abort();
                 }
-                _search_thread = Some(tokio::spawn(async move {
-                    let query = {
-                        let all_packages = all_packages.read();
-                        all_packages[shown.read()[current]].clone()
-                    };
-
-                    let real_index = shown.read()[current];
-                    let newinfo = get_info(&query, real_index, installed, &command).await;
+                _search_task = Some(tokio::spawn(async move {
+                    let real_idx = shown.read().get(current).unwrap_or(current);
+                    let newinfo = get_info(all_packages, real_idx, installed, &command).await;
                     *info.lock() = newinfo;
                     redraw.store(true, Ordering::SeqCst);
                 }))
@@ -179,9 +180,16 @@ async fn main() -> Result<(), io::Error> {
                     bold_search_style = Style::default().fg(search_color);
                 };
 
-                let para = Paragraph::new(Spans::from(vec![
+                let para = Paragraph::new(Line::from(vec![
                     Span::styled(" Search: ", bold_search_style),
-                    Span::styled(&*query, Style::default().fg(search_color)),
+                    Span::styled(
+                        query
+                            .chars()
+                            .skip((query.len() + 13).saturating_sub(size.width as usize))
+                            .take(size.width.saturating_sub(13) as usize)
+                            .collect::<String>(),
+                        Style::default().fg(search_color),
+                    ),
                 ]))
                 .block(
                     Block::default()
@@ -270,31 +278,31 @@ async fn main() -> Result<(), io::Error> {
                     };
                     let actions = Paragraph::new(if no_info {
                         vec![
-                            Spans::from(Span::styled(
+                            Line::from(Span::styled(
                                 "Press ENTER to (re)install selected packages",
                                 Style::default()
                                     .fg(Color::Green)
                                     .add_modifier(Modifier::BOLD),
                             )),
-                            Spans::from(Span::styled(
+                            Line::from(Span::styled(
                                 "Press Shift-R to uninstall selected packages",
                                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                             )),
-                            Spans::default(),
-                            Spans::from(Span::styled(
+                            Line::default(),
+                            Line::from(Span::styled(
                                 "Finding info...",
                                 Style::default().fg(Color::Gray),
                             )),
                         ]
                     } else {
                         vec![
-                            Spans::from(Span::styled(
+                            Line::from(Span::styled(
                                 "Press ENTER to (re)install selected packages",
                                 Style::default()
                                     .fg(Color::Green)
                                     .add_modifier(Modifier::BOLD),
                             )),
-                            Spans::from(Span::styled(
+                            Line::from(Span::styled(
                                 "Press Shift-R to uninstall selected packages",
                                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                             )),
@@ -319,7 +327,7 @@ async fn main() -> Result<(), io::Error> {
 
             match mode.load(Ordering::SeqCst) {
                 Mode::Insert => {
-                    terminal.set_cursor(insert_pos + 10, 1)?;
+                    terminal.set_cursor((insert_pos + 10).min(size.width.saturating_sub(3)), 1)?;
                     terminal.show_cursor()?;
                 }
                 Mode::Select => {
@@ -373,6 +381,14 @@ async fn main() -> Result<(), io::Error> {
                     }
                     redraw.store(true, Ordering::SeqCst);
                 }
+                KeyCode::Up | KeyCode::Home => {
+                    insert_pos = 0;
+                    redraw.store(true, Ordering::SeqCst);
+                }
+                KeyCode::Down | KeyCode::End => {
+                    insert_pos = query.len() as u16;
+                    redraw.store(true, Ordering::SeqCst);
+                }
                 KeyCode::Backspace => {
                     if insert_pos != 0 {
                         query.remove(insert_pos as usize - 1);
@@ -381,29 +397,18 @@ async fn main() -> Result<(), io::Error> {
                     }
                 }
                 KeyCode::Char(c) => match c {
-                    'c' => {
-                        if k.modifiers == KeyModifiers::CONTROL {
-                            disable_raw_mode()?;
-                            let mut terminal = terminal.lock();
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                            terminal.clear()?;
-                            terminal.set_cursor(0, 0)?;
+                    'c' if k.modifiers == KeyModifiers::CONTROL => {
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                        terminal.clear()?;
+                        terminal.set_cursor(0, 0)?;
 
-                            return Ok(());
-                        }
-                        query.insert(insert_pos as usize, c);
-                        insert_pos += 1;
-                        redraw.store(true, Ordering::SeqCst);
+                        return Ok(());
                     }
-                    'w' => {
-                        if k.modifiers == KeyModifiers::CONTROL {
-                            let boundary = last_word_end(query.as_bytes(), insert_pos);
-                            query = query[..boundary].to_string() + &query[insert_pos as usize..];
-                            insert_pos = boundary as u16;
-                        } else {
-                            query.insert(insert_pos as usize, c);
-                            insert_pos += 1;
-                        }
+                    'w' if k.modifiers == KeyModifiers::CONTROL => {
+                        let boundary = last_word_end(query.as_bytes(), insert_pos);
+                        query = query[..boundary].to_string() + &query[insert_pos as usize..];
+                        insert_pos = boundary as u16;
                         redraw.store(true, Ordering::SeqCst);
                     }
                     _ => {
@@ -426,27 +431,19 @@ async fn main() -> Result<(), io::Error> {
                     let command = command.clone();
                     let all_packages = all_packages.clone();
                     let installed = installed.clone();
-                    if let Some(search_thread) = _search_thread {
+                    if let Some(search_thread) = _search_task {
                         search_thread.abort();
                     }
-                    _search_thread = Some(tokio::spawn(async move {
-                        {
-                            *error_msg.lock() = "Searching for packages...";
+                    _search_task = Some(tokio::spawn(async move {
+                        *error_msg.lock() = "Searching for packages...";
 
-                            if all_packages.read().len() == 0 {
-                                std::mem::swap(
-                                    &mut list(command != "pacman").await,
-                                    &mut all_packages.write(),
-                                );
-                            }
-
-                            is_installed(all_packages.clone(), installed.clone(), &command).await;
-
-                            std::mem::swap(
-                                &mut search(&query, &all_packages.read()),
-                                &mut shown.write(),
-                            );
+                        if all_packages.read().is_empty() {
+                            list(all_packages.clone(), command != "pacman").await;
                         }
+
+                        is_installed(all_packages.clone(), installed.clone()).await;
+
+                        search(shown.clone(), &query, &all_packages.read());
 
                         if !shown.read().is_empty() {
                             mode.store(Mode::Select, Ordering::SeqCst);
@@ -470,7 +467,7 @@ async fn main() -> Result<(), io::Error> {
                         if current > 0 {
                             current -= 1;
                         } else {
-                            current = shown.read().len() - 1;
+                            current = shown_len() - 1;
                         }
                         info.lock().clear();
                         redraw.store(true, Ordering::SeqCst);
@@ -483,7 +480,8 @@ async fn main() -> Result<(), io::Error> {
                             redraw.store(true, Ordering::SeqCst);
                         }
                     } else {
-                        let result_count = shown.read().len();
+                        let result_count = shown_len() - 1;
+
                         if result_count > 1 && current < result_count - 1 {
                             current += 1;
                         } else {
@@ -499,24 +497,25 @@ async fn main() -> Result<(), io::Error> {
                     mode.store(Mode::Insert, Ordering::SeqCst);
                 }
                 KeyCode::Left | KeyCode::PageUp | KeyCode::Char('h') => {
-                    let shown_count = shown.read().len();
-                    if shown_count > per_page {
+                    let result_count = shown_len() - 1;
+                    if result_count > per_page {
                         if current >= per_page {
                             current -= per_page;
                         } else {
-                            current = shown_count - 1;
+                            current = result_count - 1;
                         }
                         info.lock().clear();
                         redraw.store(true, Ordering::SeqCst);
                     }
                 }
                 KeyCode::Right | KeyCode::PageDown | KeyCode::Char('l') => {
-                    let shown = shown.read();
-                    if shown.len() > per_page {
-                        if current == shown.len() - 1 {
+                    let shown_len = shown_len();
+
+                    if shown_len > per_page {
+                        if current == shown_len - 1 {
                             current = 0;
-                        } else if current + per_page > shown.len() - 1 {
-                            current = shown.len() - 1;
+                        } else if current + per_page > shown_len - 1 {
+                            current = shown_len - 1;
                         } else {
                             current += per_page;
                         }
@@ -529,14 +528,14 @@ async fn main() -> Result<(), io::Error> {
                     current = 0;
                     redraw.store(true, Ordering::SeqCst);
                 }
-                KeyCode::End | KeyCode::Char('G') if current != shown.read().len() - 1 => {
+                KeyCode::End | KeyCode::Char('G') if current != shown_len() - 1 => {
                     info.lock().clear();
-                    current = shown.read().len() - 1;
+                    current = shown_len() - 1;
                     redraw.store(true, Ordering::SeqCst);
                 }
                 KeyCode::Char(c) => match c {
                     ' ' => {
-                        let real_current = shown.read()[current];
+                        let real_current = real_idx(current);
                         if selected.contains(&real_current) {
                             selected.remove(&real_current);
                         } else {
@@ -551,7 +550,6 @@ async fn main() -> Result<(), io::Error> {
                     }
                     'q' => {
                         disable_raw_mode()?;
-                        let mut terminal = terminal.lock();
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                         terminal.clear()?;
                         terminal.set_cursor(0, 0)?;
@@ -560,7 +558,6 @@ async fn main() -> Result<(), io::Error> {
                     }
                     'c' if k.modifiers.contains(KeyModifiers::CONTROL) => {
                         disable_raw_mode()?;
-                        let mut terminal = terminal.lock();
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                         terminal.clear()?;
                         terminal.set_cursor(0, 0)?;
@@ -573,7 +570,7 @@ async fn main() -> Result<(), io::Error> {
                             let mut cmd = std::process::Command::new(&command);
                             cmd.arg("-R");
                             if selected.is_empty() {
-                                cmd.arg(&(all_packages.read()[shown.read()[current]]));
+                                cmd.arg(&(all_packages.read()[real_idx(current)]));
                                 has_any = true;
                             } else {
                                 for i in selected.iter() {
@@ -589,7 +586,6 @@ async fn main() -> Result<(), io::Error> {
                             }
 
                             disable_raw_mode()?;
-                            let mut terminal = terminal.lock();
                             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
                             terminal.clear()?;
@@ -605,16 +601,15 @@ async fn main() -> Result<(), io::Error> {
                 },
                 KeyCode::Enter => {
                     disable_raw_mode()?;
-                    let mut terminal = terminal.lock();
                     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
                     terminal.clear()?;
                     terminal.set_cursor(0, 0)?;
                     terminal.show_cursor()?;
                     let mut cmd = std::process::Command::new(command);
-                    cmd.args(["--rebuild", "-S"]);
+                    cmd.arg("-S");
                     if selected.is_empty() {
-                        cmd.arg(&(all_packages.read()[shown.read()[current]]));
+                        cmd.arg(&(all_packages.read()[real_idx(current)]));
                     } else {
                         for i in selected.iter() {
                             cmd.arg(&(all_packages.read()[*i]));
@@ -630,20 +625,26 @@ async fn main() -> Result<(), io::Error> {
     }
 }
 
+#[inline(always)]
+const fn is_word_boundary(byte: &u8) -> bool {
+    matches!(*byte, b' ' | b'-' | b'_')
+}
+
 fn last_word_end(bytes: &[u8], pos: u16) -> usize {
     bytes
         .iter()
         .take(pos.saturating_sub(1) as usize)
-        .rposition(|c| matches!(*c, b' ' | b'-' | b'_'))
+        .rposition(is_word_boundary)
         .map(|i| i + 1)
         .unwrap_or_default()
 }
 
 fn next_word_start(bytes: &[u8], pos: u16) -> usize {
+    let pos = pos as usize;
     bytes
         .iter()
-        .skip(pos as usize)
-        .position(|c| matches!(*c, b' ' | b'-' | b'_'))
-        .map(|i| i + pos as usize + 1)
+        .skip(pos)
+        .position(is_word_boundary)
+        .map(|i| i + pos + 1)
         .unwrap_or(bytes.len())
 }

@@ -12,14 +12,15 @@ pub struct Config {
 impl Config {
     pub fn new(args: Args) -> Self {
         let mut query: Option<String> = None;
-        let mut command = String::from("paru");
+        let mut command = None;
 
         for arg in args.skip(1) {
             match arg.as_str() {
                 "-h" | "--help" => print_help(),
+                #[allow(clippy::option_if_let_else)]
                 _ => {
-                    if arg.starts_with("-p=") {
-                        command = arg.clone().chars().skip(3).collect::<String>();
+                    if let Some(stripped) = arg.strip_prefix("-p=") {
+                        command = Some(stripped.to_string());
                     } else if let Some(q) = query {
                         query = Some(q + " " + &arg);
                     } else {
@@ -29,10 +30,9 @@ impl Config {
             }
         }
 
-        if let Err(err) = std::process::Command::new(command.as_str())
-            .arg("-h")
-            .output()
-        {
+        let command = command.unwrap_or_else(|| String::from("paru"));
+
+        if let Err(err) = std::process::Command::new(&command).arg("-h").output() {
             match err.kind() {
                 std::io::ErrorKind::NotFound => {
                     eprintln!("parui: {command}: command not found");

@@ -1,162 +1,254 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::HashSet,
+    io::{BufRead, BufReader},
+    sync::Arc,
+    time::Duration,
+};
 
+use compact_strings::CompactStrings;
 use nohash_hasher::IntSet;
 use parking_lot::RwLock;
 use tokio::{join, process::Command, time::sleep};
 use tui::{
     style::{Color, Modifier, Style},
-    text::{Span, Spans},
+    text::{Line, Span},
 };
 
-pub async fn list(show_aur: bool) -> Vec<String> {
+use crate::shown::Shown;
+
+pub async fn list(all_packages: Arc<RwLock<CompactStrings>>, show_aur: bool) {
     let mut cmd = Command::new("pacman");
     cmd.arg("-Slq");
 
-    let mut out = Vec::new();
-
-    let pacman_out = async move { cmd.output().await.map(|o| o.stdout) };
+    let pacman_out = cmd.output();
     let aur_out = tokio::task::spawn_blocking(move || {
-        let mut buf = Vec::new();
-
         if show_aur {
-            let Ok(req) = ureq::get("https://aur.archlinux.org/packages.gz").call() else {
-                return buf;
-            };
-            _ = req.into_reader().read_to_end(&mut buf);
+            ureq::get("https://aur.archlinux.org/packages.gz")
+                .call()
+                .ok()
+        } else {
+            None
         }
-        buf
     });
 
     let (pacman_out, aur_out) = join!(pacman_out, aur_out);
 
     let Ok(pacman_out) = pacman_out else {
-        return out;
+        return;
     };
 
     let Ok(aur_out) = aur_out else {
-        return out;
+        return;
     };
 
-    let mut buf = Vec::new();
-    for byte in pacman_out.into_iter().chain(aur_out.into_iter()) {
+    let mut out = all_packages.write();
+    out.clear();
+
+    let mut buf = Vec::with_capacity(128);
+    let mut push_byte = |byte| {
         if byte != b'\n' {
             buf.push(byte);
-            continue;
+            return;
         }
 
         if let Ok(s) = std::str::from_utf8(&buf) {
-            out.push(s.to_owned());
+            out.push(s);
         }
 
         buf.clear();
-    }
+    };
 
-    out
+    pacman_out.stdout.into_iter().for_each(&mut push_byte);
+    aur_out.map(|o| {
+        o.into_string()
+            .map(|s| s.into_bytes().into_iter().for_each(push_byte))
+    });
+
+    out.shrink_to_fit();
+    out.shrink_meta_to_fit();
 }
 
-pub fn search(query: &str, packages: &[String]) -> Vec<usize> {
-    if query.is_empty() {
-        return (0..packages.len()).collect();
+pub fn search(shown: Arc<RwLock<Shown>>, query: &str, packages: &CompactStrings) {
+    let mut shown = shown.write();
+    shown.clear();
+    *shown = if query.is_empty() {
+        Shown::All
+    } else {
+        Shown::Few(
+            packages
+                .iter()
+                .enumerate()
+                .filter_map(|(i, package)| {
+                    if package.contains(query) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+        )
     }
-
-    packages
-        .iter()
-        .enumerate()
-        .filter_map(|(i, package)| {
-            if package.contains(query) {
-                Some(i)
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
 pub async fn format_results<'a>(
-    packages: Arc<RwLock<Vec<String>>>,
-    shown: Arc<RwLock<Vec<usize>>>,
+    packages: Arc<RwLock<CompactStrings>>,
+    shown: Arc<RwLock<Shown>>,
     current: usize,
     selected: &IntSet<usize>,
     height: usize,
     pad_to: usize,
     skip: usize,
     installed: Arc<RwLock<IntSet<usize>>>,
-) -> Vec<Spans<'a>> {
-    let index_style = Style::default().fg(Color::Gray);
-    let installed_style = Style::default()
-        .fg(Color::Green)
-        .add_modifier(Modifier::BOLD);
-    let installed_selected_style = Style::default()
-        .bg(Color::Red)
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD);
-    let uninstalled_style = Style::default()
-        .fg(Color::LightBlue)
-        .add_modifier(Modifier::BOLD);
-    let uninstalled_selected_style = Style::default()
-        .bg(Color::Red)
-        .fg(Color::Blue)
-        .add_modifier(Modifier::BOLD);
-
-    let names: Vec<String> = shown
-        .read()
-        .iter()
-        .skip(skip)
-        .take(height - 5)
-        .map(|idx| packages.read()[*idx].clone())
-        .collect();
-    if names.is_empty() {
-        return vec![Spans::default()];
+) -> Vec<Line<'a>> {
+    macro_rules! style {
+        ($fg:expr) => {
+            Style {
+                fg: Some(($fg)),
+                bg: None,
+                add_modifier: Modifier::empty(),
+                sub_modifier: Modifier::empty(),
+            }
+        };
+        ($fg:expr, $mod:expr) => {
+            Style {
+                fg: Some(($fg)),
+                bg: None,
+                add_modifier: ($mod),
+                sub_modifier: Modifier::empty(),
+            }
+        };
+        ($fg:expr, $bg:expr, $mod:expr) => {
+            Style {
+                fg: Some(($fg)),
+                bg: Some(($bg)),
+                add_modifier: ($mod),
+                sub_modifier: Modifier::empty(),
+            }
+        };
     }
 
-    names
-        .into_iter()
-        .enumerate()
-        .map(|(i, line)| {
-            let real_index = shown.read()[skip + i];
+    macro_rules! raws {
+        ($($str:literal),*) => {
+            [
+                $(Span {
+                    content: std::borrow::Cow::Borrowed($str),
+                    style: DEFAULT_STYLE,
+                }),*
+            ]
+        };
+    }
 
-            let index = i + skip + 1;
-            let mut spans = vec![
-                Span::styled(
-                    index.to_string()
-                        + &" ".repeat(pad_to - (index as f32 + 1f32).log10().ceil() as usize + 1),
-                    index_style,
-                ),
-                Span::styled(
+    const INDEX_STYLE: Style = style!(Color::Gray);
+    const INSTALLED_STYLE: Style = style!(Color::Green, Modifier::BOLD);
+    const INSTALLED_SELECTED_STYLE: Style = style!(Color::Yellow, Color::Red, Modifier::BOLD);
+    const UNINSTALLED_STYLE: Style = style!(Color::LightBlue, Modifier::BOLD);
+    const UNINSTALLED_SELECTED_STYLE: Style = style!(Color::Blue, Color::Red, Modifier::BOLD);
+
+    const DEFAULT_STYLE: Style = Style {
+        fg: None,
+        bg: None,
+        add_modifier: Modifier::empty(),
+        sub_modifier: Modifier::empty(),
+    };
+    const PADDINGS: [Span; 16] = raws!(
+        " ",
+        "  ",
+        "   ",
+        "    ",
+        "     ",
+        "      ",
+        "       ",
+        "        ",
+        "         ",
+        "          ",
+        "           ",
+        "            ",
+        "             ",
+        "              ",
+        "               ",
+        "                "
+    );
+
+    const SELECTED: Span = Span {
+        content: Cow::Borrowed("!"),
+        style: style!(Color::Yellow, Modifier::BOLD),
+    };
+
+    let packages = packages.read();
+    match shown.read().get_vec() {
+        Some(shown) => shown
+            .iter()
+            .skip(skip)
+            .take(height - 5)
+            .copied()
+            .map(|idx| packages[idx].to_string())
+            .enumerate()
+            .map(|(i, line)| {
+                let real_index = shown[skip + i];
+                let index = i + skip + 1;
+
+                let index_span = Span::styled(index.to_string(), INDEX_STYLE);
+                let padding_span = PADDINGS[pad_to - index.ilog10() as usize].clone();
+                let line_span = Span::styled(
                     line,
-                    if installed.read().contains(&real_index) {
-                        if current == index - 1 {
-                            installed_selected_style
-                        } else {
-                            installed_style
-                        }
-                    } else if current == index - 1 {
-                        uninstalled_selected_style
-                    } else {
-                        uninstalled_style
+                    match (installed.read().contains(&real_index), current == index - 1) {
+                        (true, true) => INSTALLED_SELECTED_STYLE,
+                        (true, false) => INSTALLED_STYLE,
+                        (false, true) => UNINSTALLED_SELECTED_STYLE,
+                        (false, false) => UNINSTALLED_STYLE,
                     },
-                ),
-            ];
-            if selected.contains(&real_index) {
-                spans.push(Span::styled(
-                    "!",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-            Spans::from(spans)
-        })
-        .collect()
+                );
+
+                let spans = if selected.contains(&real_index) {
+                    vec![index_span, padding_span, line_span, SELECTED]
+                } else {
+                    vec![index_span, padding_span, line_span]
+                };
+                Line::from(spans)
+            })
+            .collect(),
+        None => packages
+            .iter()
+            .enumerate()
+            .skip(skip)
+            .take(height - 5)
+            .map(|(i, s)| (i, s.to_string()))
+            .map(|(i, line)| {
+                let index_span = Span::styled((i + 1).to_string(), INDEX_STYLE);
+                let padding_span = PADDINGS[pad_to - (i + 1).ilog10() as usize].clone();
+                let line_span = Span::styled(
+                    line,
+                    match (installed.read().contains(&i), current == i) {
+                        (true, true) => INSTALLED_SELECTED_STYLE,
+                        (true, false) => INSTALLED_STYLE,
+                        (false, true) => UNINSTALLED_SELECTED_STYLE,
+                        (false, false) => UNINSTALLED_STYLE,
+                    },
+                );
+
+                let spans = if selected.contains(&i) {
+                    vec![index_span, padding_span, line_span, SELECTED]
+                } else {
+                    vec![index_span, padding_span, line_span]
+                };
+                Line::from(spans)
+            })
+            .collect(),
+    }
 }
 
 pub async fn get_info<'a>(
-    query: &String,
+    all_packages: Arc<RwLock<CompactStrings>>,
     index: usize,
     installed_cache: Arc<RwLock<IntSet<usize>>>,
     command: &str,
-) -> Vec<Spans<'a>> {
+) -> Vec<Line<'a>> {
+    if index >= all_packages.read().len() {
+        return Vec::new();
+    }
+
     let mut cmd = Command::new(command);
 
     if installed_cache.read().contains(&index) {
@@ -167,23 +259,31 @@ pub async fn get_info<'a>(
 
         cmd.arg("-Si");
     };
-    cmd.arg(query);
+
+    cmd.arg(&all_packages.read()[index]);
 
     let output = cmd_output(cmd).await;
     let lines = output.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
+
+    const KEY_STYLE: Style = Style {
+        fg: None,
+        bg: None,
+        add_modifier: Modifier::BOLD,
+        sub_modifier: Modifier::empty(),
+    };
 
     let mut info = Vec::with_capacity(lines.len());
     for mut line in lines {
         if !line.starts_with(' ') {
             if let Some(idx) = line.find(':') {
                 let value = line.split_off(idx + 1);
-                info.push(Spans::from(vec![
-                    Span::styled(line, Style::default().add_modifier(Modifier::BOLD)),
+                info.push(Line::from(vec![
+                    Span::styled(line, KEY_STYLE),
                     Span::raw(value),
                 ]));
             }
         } else {
-            info.push(Spans::from(line));
+            info.push(Line::from(line));
         }
     }
 
@@ -191,22 +291,46 @@ pub async fn get_info<'a>(
 }
 
 pub async fn is_installed(
-    packages: Arc<RwLock<Vec<String>>>,
+    packages: Arc<RwLock<CompactStrings>>,
     installed: Arc<RwLock<IntSet<usize>>>,
-    command: &str,
 ) {
-    let mut cmd = Command::new(command);
-    cmd.arg("-Qq");
+    const PATH: &str = "/var/lib/pacman/local";
+    const DESC: &str = "desc";
 
-    let output = cmd_output(cmd).await;
-    let mut lines = output.lines().collect::<Vec<_>>();
-    let mut installed = installed.write();
+    let Ok(dir) = std::fs::read_dir(PATH) else {
+        return;
+    };
 
-    for (idx, package) in packages.read().iter().enumerate() {
-        if let Some(line_idx) = lines.iter().position(|l| l == package) {
-            lines.remove(line_idx);
-            installed.insert(idx);
+    let mut set = HashSet::new();
+    for entry in dir.filter_map(Result::ok) {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+
+        if !ft.is_dir() {
+            continue;
         }
+
+        let path = entry.path().join(DESC);
+        let Ok(file) = std::fs::File::open(path) else {
+            continue;
+        };
+
+        let Some(Ok(name)) = BufReader::new(file).lines().nth(1) else {
+            continue;
+        };
+
+        set.insert(name);
+    }
+
+    let mut installed = installed.write();
+    for (pos, _) in packages
+        .read()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| set.contains(*p))
+    {
+        installed.insert(pos);
     }
 }
 
