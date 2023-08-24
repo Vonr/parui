@@ -12,7 +12,7 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use interface::{format_results, get_info, is_installed, list, search};
+use interface::{check_installed, format_results, get_info, list, search};
 use mode::Mode;
 use nohash_hasher::IntSet;
 use parking_lot::{Mutex, RwLock};
@@ -29,6 +29,7 @@ use tui::{
 
 mod config;
 mod interface;
+mod macros;
 mod mode;
 mod shown;
 
@@ -95,7 +96,7 @@ async fn main() -> Result<(), io::Error> {
             }
 
             if installed.read().is_empty() {
-                is_installed(all_packages.clone(), installed.clone()).await;
+                check_installed(all_packages.clone(), installed.clone()).await;
             }
 
             search(shown.clone(), &query, &all_packages.read());
@@ -132,19 +133,16 @@ async fn main() -> Result<(), io::Error> {
         if redraw.swap(false, Ordering::SeqCst) {
             let shown_len_str_len = (shown_len() + 1).ilog10() as usize + 1;
 
-            let formatted_shown = {
-                format_results(
-                    all_packages.clone(),
-                    shown.clone(),
-                    current,
-                    &selected,
-                    size.height as usize,
-                    shown_len_str_len,
-                    skipped,
-                    installed.clone(),
-                )
-                .await
-            };
+            let formatted_shown = format_results(
+                all_packages.clone(),
+                shown.clone(),
+                current,
+                &selected,
+                size.height as usize,
+                shown_len_str_len,
+                skipped,
+                installed.clone(),
+            );
 
             if info.lock().is_empty() && !shown.read().is_empty() {
                 let shown = shown.clone();
@@ -347,7 +345,7 @@ async fn main() -> Result<(), io::Error> {
             if matches!(e, Event::Resize(..)) {
                 redraw.store(true, Ordering::SeqCst);
             };
-            continue
+            continue;
         };
 
         match mode.load(Ordering::SeqCst) {
@@ -403,6 +401,10 @@ async fn main() -> Result<(), io::Error> {
                         terminal.clear()?;
                         terminal.set_cursor(0, 0)?;
 
+                        if let Some(search_thread) = _search_task {
+                            search_thread.abort();
+                        }
+
                         return Ok(());
                     }
                     'w' if k.modifiers == KeyModifiers::CONTROL => {
@@ -441,7 +443,7 @@ async fn main() -> Result<(), io::Error> {
                             list(all_packages.clone(), command != "pacman").await;
                         }
 
-                        is_installed(all_packages.clone(), installed.clone()).await;
+                        check_installed(all_packages.clone(), installed.clone()).await;
 
                         search(shown.clone(), &query, &all_packages.read());
 
@@ -554,6 +556,10 @@ async fn main() -> Result<(), io::Error> {
                         terminal.clear()?;
                         terminal.set_cursor(0, 0)?;
 
+                        if let Some(search_thread) = _search_task {
+                            search_thread.abort();
+                        }
+
                         return Ok(());
                     }
                     'c' if k.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -561,6 +567,10 @@ async fn main() -> Result<(), io::Error> {
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                         terminal.clear()?;
                         terminal.set_cursor(0, 0)?;
+
+                        if let Some(search_thread) = _search_task {
+                            search_thread.abort();
+                        }
 
                         return Ok(());
                     }
@@ -606,6 +616,11 @@ async fn main() -> Result<(), io::Error> {
                     terminal.clear()?;
                     terminal.set_cursor(0, 0)?;
                     terminal.show_cursor()?;
+
+                    if let Some(search_thread) = _search_task {
+                        search_thread.abort();
+                    }
+
                     let mut cmd = std::process::Command::new(command);
                     cmd.arg("-S");
                     if selected.is_empty() {
@@ -615,6 +630,7 @@ async fn main() -> Result<(), io::Error> {
                             cmd.arg(&(all_packages.read()[*i]));
                         }
                     }
+
                     cmd.exec();
 
                     return Ok(());

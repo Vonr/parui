@@ -1,7 +1,7 @@
 [package]
 name = "parui"
 description = "Simple TUI frontend for paru or yay."
-version = "1.0.8"
+version = "1.0.9"
 edition = "2021"
 license = "MIT"
 readme = "README.md"
@@ -24,29 +24,34 @@ debug = true
 strip = false
 
 [dependencies]
-atomic = "0.5.3"
+atomic = "0.6.0"
 parking_lot = "0.12.1"
 nohash-hasher = "0.2.0"
 compact_strings = "1.2.2"
 dhat = "0.3.2"
 
 [dependencies.crossterm]
-version = "0.26.1"
+version = "0.27.0"
 default-features = false
+features = ["events"]
 
 [dependencies.tokio]
-version = "1.28.2"
+version = "1.32.0"
 features = ["process", "rt-multi-thread", "time", "macros", "sync"]
 
 [dependencies.tui]
 package = "ratatui"
-version = "0.21.0"
+version = "0.22.0"
 features = ["crossterm"]
 
 [dependencies.ureq]
-version = "2.6.2"
+version = "2.7.1"
 default-features = false
-features = ["gzip", "tls", "native-tls"]
+features = ["gzip", "tls"]
+
+[dependencies.bytemuck]
+version = "1.13.1"
+features = ["derive"]
 
 [features]
 dhat = []

@@ -92,7 +92,7 @@ pub fn search(shown: Arc<RwLock<Shown>>, query: &str, packages: &CompactStrings)
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn format_results<'a>(
+pub fn format_results<'a>(
     packages: Arc<RwLock<CompactStrings>>,
     shown: Arc<RwLock<Shown>>,
     current: usize,
@@ -102,56 +102,29 @@ pub async fn format_results<'a>(
     skip: usize,
     installed: Arc<RwLock<IntSet<usize>>>,
 ) -> Vec<Line<'a>> {
-    macro_rules! style {
-        ($fg:expr) => {
-            Style {
-                fg: Some(($fg)),
-                bg: None,
-                add_modifier: Modifier::empty(),
-                sub_modifier: Modifier::empty(),
-            }
-        };
-        ($fg:expr, $mod:expr) => {
-            Style {
-                fg: Some(($fg)),
-                bg: None,
-                add_modifier: ($mod),
-                sub_modifier: Modifier::empty(),
-            }
-        };
-        ($fg:expr, $bg:expr, $mod:expr) => {
-            Style {
-                fg: Some(($fg)),
-                bg: Some(($bg)),
-                add_modifier: ($mod),
-                sub_modifier: Modifier::empty(),
-            }
-        };
-    }
-
-    macro_rules! raws {
-        ($($str:literal),*) => {
-            [
-                $(Span {
-                    content: std::borrow::Cow::Borrowed($str),
-                    style: DEFAULT_STYLE,
-                }),*
-            ]
-        };
-    }
+    use crate::{raws, style};
 
     const INDEX_STYLE: Style = style!(Color::Gray);
-    const INSTALLED_STYLE: Style = style!(Color::Green, Modifier::BOLD);
-    const INSTALLED_SELECTED_STYLE: Style = style!(Color::Yellow, Color::Red, Modifier::BOLD);
-    const UNINSTALLED_STYLE: Style = style!(Color::LightBlue, Modifier::BOLD);
-    const UNINSTALLED_SELECTED_STYLE: Style = style!(Color::Blue, Color::Red, Modifier::BOLD);
-
-    const DEFAULT_STYLE: Style = Style {
-        fg: None,
-        bg: None,
-        add_modifier: Modifier::empty(),
-        sub_modifier: Modifier::empty(),
+    const INSTALLED_STYLE: Style = style! {
+        fg: Color::Green,
+        mod: Modifier::BOLD,
     };
+    const INSTALLED_SELECTED_STYLE: Style = style! {
+        fg: Color::Yellow,
+        bg: Color::Red,
+        mod: Modifier::BOLD,
+    };
+    const UNINSTALLED_STYLE: Style = style! {
+        fg: Color::LightBlue,
+        mod: Modifier::BOLD,
+    };
+    const UNINSTALLED_SELECTED_STYLE: Style = style! {
+        fg: Color::Blue,
+        bg: Color::Red,
+        mod: Modifier::BOLD,
+    };
+    const DEFAULT_STYLE: Style = style!();
+
     const PADDINGS: [Span; 16] = raws!(
         " ",
         "  ",
@@ -173,7 +146,7 @@ pub async fn format_results<'a>(
 
     const SELECTED: Span = Span {
         content: Cow::Borrowed("!"),
-        style: style!(Color::Yellow, Modifier::BOLD),
+        style: style! { fg: Color::Yellow, mod: Modifier::BOLD, },
     };
 
     let packages = packages.read();
@@ -268,6 +241,7 @@ pub async fn get_info<'a>(
     const KEY_STYLE: Style = Style {
         fg: None,
         bg: None,
+        underline_color: None,
         add_modifier: Modifier::BOLD,
         sub_modifier: Modifier::empty(),
     };
@@ -290,7 +264,7 @@ pub async fn get_info<'a>(
     info
 }
 
-pub async fn is_installed(
+pub async fn check_installed(
     packages: Arc<RwLock<CompactStrings>>,
     installed: Arc<RwLock<IntSet<usize>>>,
 ) {
