@@ -484,7 +484,7 @@ async fn main() -> Result<(), io::Error> {
                     } else {
                         let result_count = shown_len() - 1;
 
-                        if result_count > 1 && current < result_count - 1 {
+                        if result_count > 1 && current < result_count {
                             current += 1;
                         } else {
                             current = 0;
