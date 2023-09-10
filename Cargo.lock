@@ -117,9 +117,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "compact_strings"
-version = "1.2.2"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0c5685be29536b1c7f8251cbcad899f86134711da1fa0491c18fffef48c6788"
+checksum = "1e45c6b43f70aab4a0a8e4cc1de3596fed0b9e204986cb84af51c639f0b647bd"
 
 [[package]]
 name = "crc32fast"
