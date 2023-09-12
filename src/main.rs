@@ -1,9 +1,10 @@
 use std::os::unix::prelude::CommandExt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use std::{env, io};
 
+use arc_swap::ArcSwap;
 use atomic::Atomic;
 use compact_strings::CompactStrings;
 use config::Config;
@@ -13,9 +14,10 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use interface::{check_installed, format_results, get_info, list, search};
+use message::Message;
 use mode::Mode;
 use nohash_hasher::IntSet;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use shown::Shown;
 use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
@@ -30,6 +32,7 @@ use tui::{
 mod config;
 mod interface;
 mod macros;
+mod message;
 mod mode;
 mod shown;
 
@@ -48,27 +51,31 @@ async fn main() -> Result<(), io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+
     let mut query = args.query.unwrap_or_default();
-    let shown = Arc::new(RwLock::new(Shown::Few(Vec::new())));
+    let shown = Arc::new(ArcSwap::new(Arc::new(Shown::Few(Vec::new()))));
     let mode = Arc::new(Atomic::new(Mode::Insert));
     let mut current: usize = 0;
     let mut selected = IntSet::default();
-    let mut info_scroll = 0;
+    let mut info_scroll: u16 = 0;
     let info = Arc::new(Mutex::new(Vec::new()));
     let redraw = Arc::new(AtomicBool::new(true));
-    let mut insert_pos;
+    let mut insert_pos: u16;
 
-    let all_packages = Arc::new(RwLock::new(CompactStrings::with_capacity(
-        16 * 16384,
-        16384,
-    )));
-    let installed = Arc::new(RwLock::new(IntSet::default()));
-    let error_msg = Arc::new(Mutex::new("Try searching for something"));
+    let all_packages: Arc<OnceLock<&'static CompactStrings>> = Arc::new(OnceLock::new());
+    let installed: Arc<OnceLock<IntSet<usize>>> = Arc::new(OnceLock::new());
+    let error_msg = Arc::new(Atomic::new(Message::TrySearch));
 
-    let shown_len = || shown.read().len().unwrap_or(all_packages.read().len());
-    let real_idx = |idx| shown.read().get(idx).unwrap_or(idx);
+    let shown_len = || {
+        (*shown)
+            .load()
+            .len()
+            .unwrap_or(all_packages.get().map(|p| p.len()).unwrap_or_default())
+    };
+    let real_idx = |idx| (*shown).load().get(idx).unwrap_or(idx);
 
     let mut _search_task = None;
 
@@ -82,37 +89,38 @@ async fn main() -> Result<(), io::Error> {
         let command = command.clone();
         let all_packages = all_packages.clone();
         let installed = installed.clone();
+
         _search_task = Some(tokio::spawn(async move {
             if query.is_empty() {
-                *error_msg.lock() = "Listing packages...";
+                error_msg.store(Message::ListingPackages, Ordering::SeqCst);
             } else {
-                *error_msg.lock() = "Searching for packages...";
+                error_msg.store(Message::Searching, Ordering::SeqCst);
             }
 
             redraw.store(true, Ordering::SeqCst);
 
-            if all_packages.read().is_empty() {
-                list(all_packages.clone(), command != "pacman").await;
+            if all_packages.get().is_none() {
+                let result = list(command != "pacman").await;
+                all_packages.get_or_init(|| result);
             }
 
-            if installed.read().is_empty() {
-                check_installed(all_packages.clone(), installed.clone()).await;
+            if installed.get().is_none() {
+                let result = check_installed(all_packages.get().unwrap()).await;
+                installed.get_or_init(|| result);
             }
 
-            search(shown.clone(), &query, &all_packages.read());
+            shown.store(search(&query, all_packages.get().unwrap()).into());
 
-            if !shown.read().is_empty() {
+            if !(*shown).load().is_empty() {
                 mode.store(Mode::Select, Ordering::SeqCst);
             } else {
-                *error_msg.lock() = "No or too many shown, try searching for something else";
+                error_msg.store(Message::NoResults, Ordering::SeqCst);
             }
             redraw.store(true, Ordering::SeqCst);
         }));
     }
 
-    {
-        terminal.clear()?;
-    }
+    terminal.clear()?;
 
     loop {
         let mut line = current;
@@ -133,18 +141,25 @@ async fn main() -> Result<(), io::Error> {
         if redraw.swap(false, Ordering::SeqCst) {
             let shown_len_str_len = (shown_len() + 1).ilog10() as usize + 1;
 
-            let formatted_shown = format_results(
-                all_packages.clone(),
-                shown.clone(),
-                current,
-                &selected,
-                size.height as usize,
-                shown_len_str_len,
-                skipped,
-                installed.clone(),
-            );
+            let formatted_shown = all_packages
+                .get()
+                .and_then(|all_packages| {
+                    installed.get().map(|installed| {
+                        format_results(
+                            all_packages,
+                            shown.clone(),
+                            current,
+                            &selected,
+                            size.height as usize,
+                            shown_len_str_len,
+                            skipped,
+                            installed,
+                        )
+                    })
+                })
+                .unwrap_or_default();
 
-            if info.lock().is_empty() && !shown.read().is_empty() {
+            if info.lock().is_empty() && !(*shown).load().is_empty() {
                 let shown = shown.clone();
                 let command = command.clone();
                 let redraw = redraw.clone();
@@ -155,8 +170,14 @@ async fn main() -> Result<(), io::Error> {
                     search_thread.abort();
                 }
                 _search_task = Some(tokio::spawn(async move {
-                    let real_idx = shown.read().get(current).unwrap_or(current);
-                    let newinfo = get_info(all_packages, real_idx, installed, &command).await;
+                    let real_idx = (*shown).load().get(current).unwrap_or(current);
+                    let newinfo = get_info(
+                        all_packages.get().unwrap(),
+                        real_idx,
+                        installed.get().unwrap(),
+                        &command,
+                    )
+                    .await;
                     *info.lock() = newinfo;
                     redraw.store(true, Ordering::SeqCst);
                 }))
@@ -227,14 +248,14 @@ async fn main() -> Result<(), io::Error> {
                 };
                 s.render_widget(para, area);
 
-                if shown.read().is_empty() {
+                if (*shown).load().is_empty() {
                     let area = Rect {
                         x: size.width / 4 + 1,
                         y: size.height / 2 - 2,
                         width: size.width / 2,
                         height: 4,
                     };
-                    let no_shown = Paragraph::new(*error_msg.lock())
+                    let no_shown = Paragraph::new(error_msg.load(Ordering::SeqCst).as_str())
                         .block(
                             Block::default()
                                 .title(Span::styled(
@@ -316,9 +337,9 @@ async fn main() -> Result<(), io::Error> {
                         height: size.height - 10 - no_info as u16,
                     };
 
-                    let info = Paragraph::new(info.clone())
+                    let info = Paragraph::new(info)
                         .wrap(Wrap { trim: false })
-                        .scroll((info_scroll as u16, 0));
+                        .scroll((info_scroll, 0));
                     s.render_widget(info, area);
                 }
             })?;
@@ -351,7 +372,7 @@ async fn main() -> Result<(), io::Error> {
         match mode.load(Ordering::SeqCst) {
             Mode::Insert => match k.code {
                 KeyCode::Esc => {
-                    if !shown.read().is_empty() {
+                    if !(*shown).load().is_empty() {
                         current = 0;
                         redraw.store(true, Ordering::SeqCst);
                         mode.store(Mode::Select, Ordering::SeqCst);
@@ -398,8 +419,6 @@ async fn main() -> Result<(), io::Error> {
                     'c' if k.modifiers == KeyModifiers::CONTROL => {
                         disable_raw_mode()?;
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                        terminal.clear()?;
-                        terminal.set_cursor(0, 0)?;
 
                         if let Some(search_thread) = _search_task {
                             search_thread.abort();
@@ -420,11 +439,10 @@ async fn main() -> Result<(), io::Error> {
                     }
                 },
                 KeyCode::Enter => {
-                    installed.write().clear();
                     info.lock().clear();
                     current = 0;
                     redraw.store(true, Ordering::SeqCst);
-                    shown.write().clear();
+                    shown.store(Shown::Few(Vec::new()).into());
                     let mode = mode.clone();
                     let shown = shown.clone();
                     let error_msg = error_msg.clone();
@@ -437,21 +455,24 @@ async fn main() -> Result<(), io::Error> {
                         search_thread.abort();
                     }
                     _search_task = Some(tokio::spawn(async move {
-                        *error_msg.lock() = "Searching for packages...";
+                        error_msg.store(Message::Searching, Ordering::SeqCst);
 
-                        if all_packages.read().is_empty() {
-                            list(all_packages.clone(), command != "pacman").await;
+                        if all_packages.get().is_none() {
+                            let result = list(command != "pacman").await;
+                            all_packages.get_or_init(|| result);
                         }
 
-                        check_installed(all_packages.clone(), installed.clone()).await;
+                        if installed.get().is_none() {
+                            let result = check_installed(all_packages.get().unwrap()).await;
+                            installed.get_or_init(|| result);
+                        }
 
-                        search(shown.clone(), &query, &all_packages.read());
+                        shown.store(search(&query, all_packages.get().unwrap()).into());
 
-                        if !shown.read().is_empty() {
+                        if !(*shown).load().is_empty() {
                             mode.store(Mode::Select, Ordering::SeqCst);
                         } else {
-                            *error_msg.lock() =
-                                "No or too many shown, try searching for something else";
+                            error_msg.store(Message::NoResults, Ordering::SeqCst);
                         }
                         redraw.store(true, Ordering::SeqCst);
                     }));
@@ -482,9 +503,9 @@ async fn main() -> Result<(), io::Error> {
                             redraw.store(true, Ordering::SeqCst);
                         }
                     } else {
-                        let result_count = shown_len() - 1;
+                        let result_count = shown_len();
 
-                        if result_count > 1 && current < result_count {
+                        if result_count > 1 && current < result_count - 1 {
                             current += 1;
                         } else {
                             current = 0;
@@ -503,8 +524,10 @@ async fn main() -> Result<(), io::Error> {
                     if result_count > per_page {
                         if current >= per_page {
                             current -= per_page;
+                        } else if current % per_page == 0 {
+                            current = result_count / per_page * per_page;
                         } else {
-                            current = result_count - 1;
+                            current = current / per_page * per_page;
                         }
                         info.lock().clear();
                         redraw.store(true, Ordering::SeqCst);
@@ -553,8 +576,6 @@ async fn main() -> Result<(), io::Error> {
                     'q' => {
                         disable_raw_mode()?;
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                        terminal.clear()?;
-                        terminal.set_cursor(0, 0)?;
 
                         if let Some(search_thread) = _search_task {
                             search_thread.abort();
@@ -565,8 +586,6 @@ async fn main() -> Result<(), io::Error> {
                     'c' if k.modifiers.contains(KeyModifiers::CONTROL) => {
                         disable_raw_mode()?;
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                        terminal.clear()?;
-                        terminal.set_cursor(0, 0)?;
 
                         if let Some(search_thread) = _search_task {
                             search_thread.abort();
@@ -575,17 +594,17 @@ async fn main() -> Result<(), io::Error> {
                         return Ok(());
                     }
                     'R' => {
-                        if installed.read().contains(&current) {
+                        if installed.get().unwrap().contains(&current) {
                             let mut has_any = false;
                             let mut cmd = std::process::Command::new(&command);
                             cmd.arg("-R");
                             if selected.is_empty() {
-                                cmd.arg(&(all_packages.read()[real_idx(current)]));
+                                cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
                                 has_any = true;
                             } else {
                                 for i in selected.iter() {
-                                    if installed.read().contains(i) {
-                                        cmd.arg(&(all_packages.read()[*i]));
+                                    if installed.get().unwrap().contains(i) {
+                                        cmd.arg(&(all_packages.get().unwrap()[*i]));
                                         has_any = true;
                                     }
                                 }
@@ -597,10 +616,8 @@ async fn main() -> Result<(), io::Error> {
 
                             disable_raw_mode()?;
                             execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-                            terminal.clear()?;
-                            terminal.set_cursor(0, 0)?;
                             terminal.show_cursor()?;
+
                             cmd.exec();
 
                             return Ok(());
@@ -612,9 +629,6 @@ async fn main() -> Result<(), io::Error> {
                 KeyCode::Enter => {
                     disable_raw_mode()?;
                     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-                    terminal.clear()?;
-                    terminal.set_cursor(0, 0)?;
                     terminal.show_cursor()?;
 
                     if let Some(search_thread) = _search_task {
@@ -624,10 +638,10 @@ async fn main() -> Result<(), io::Error> {
                     let mut cmd = std::process::Command::new(command);
                     cmd.arg("-S");
                     if selected.is_empty() {
-                        cmd.arg(&(all_packages.read()[real_idx(current)]));
+                        cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
                     } else {
                         for i in selected.iter() {
-                            cmd.arg(&(all_packages.read()[*i]));
+                            cmd.arg(&(all_packages.get().unwrap()[*i]));
                         }
                     }
 

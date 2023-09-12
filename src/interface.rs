@@ -6,9 +6,9 @@ use std::{
     time::Duration,
 };
 
+use arc_swap::ArcSwap;
 use compact_strings::CompactStrings;
 use nohash_hasher::IntSet;
-use parking_lot::RwLock;
 use tokio::{join, process::Command, time::sleep};
 use tui::{
     style::{Color, Modifier, Style},
@@ -17,7 +17,7 @@ use tui::{
 
 use crate::shown::Shown;
 
-pub async fn list(all_packages: Arc<RwLock<CompactStrings>>, show_aur: bool) {
+pub async fn list(show_aur: bool) -> &'static mut CompactStrings {
     let mut cmd = Command::new("pacman");
     cmd.arg("-Slq");
 
@@ -34,15 +34,16 @@ pub async fn list(all_packages: Arc<RwLock<CompactStrings>>, show_aur: bool) {
 
     let (pacman_out, aur_out) = join!(pacman_out, aur_out);
 
+    let out = Box::leak(Box::new(CompactStrings::with_capacity(16 * 16384, 16384)));
+
     let Ok(pacman_out) = pacman_out else {
-        return;
+        return out;
     };
 
     let Ok(aur_out) = aur_out else {
-        return;
+        return out;
     };
 
-    let mut out = all_packages.write();
     out.clear();
 
     let mut buf = Vec::with_capacity(128);
@@ -60,49 +61,46 @@ pub async fn list(all_packages: Arc<RwLock<CompactStrings>>, show_aur: bool) {
     };
 
     pacman_out.stdout.into_iter().for_each(&mut push_byte);
-    aur_out.map(|o| {
-        o.into_string()
-            .map(|s| s.into_bytes().into_iter().for_each(push_byte))
-    });
+    if let Some(aur_out) = aur_out {
+        let mut buf = Vec::with_capacity(16 * 16384);
+
+        aur_out.into_reader().read_to_end(&mut buf).unwrap();
+        buf.into_iter().for_each(&mut push_byte)
+    }
 
     out.shrink_to_fit();
     out.shrink_meta_to_fit();
+
+    out
 }
 
-pub fn search(shown: Arc<RwLock<Shown>>, query: &str, packages: &CompactStrings) {
-    let mut shown = shown.write();
-    shown.clear();
-    *shown = if query.is_empty() {
+pub fn search(query: &str, packages: &CompactStrings) -> Shown {
+    if query.is_empty() {
         Shown::All
     } else {
         Shown::Few(
             packages
                 .iter()
                 .enumerate()
-                .filter_map(|(i, package)| {
-                    if package.contains(query) {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                })
+                .filter(|(_, package)| package.contains(query))
+                .map(|(i, _)| i)
                 .collect(),
         )
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn format_results<'a>(
-    packages: Arc<RwLock<CompactStrings>>,
-    shown: Arc<RwLock<Shown>>,
+pub fn format_results<'line>(
+    packages: &'static CompactStrings,
+    shown: Arc<ArcSwap<Shown>>,
     current: usize,
     selected: &IntSet<usize>,
     height: usize,
     pad_to: usize,
     skip: usize,
-    installed: Arc<RwLock<IntSet<usize>>>,
-) -> Vec<Line<'a>> {
-    use crate::{raws, style};
+    installed: &IntSet<usize>,
+) -> Vec<Line<'line>> {
+    use crate::{cows, style};
 
     const INDEX_STYLE: Style = style!(Color::Gray);
     const INSTALLED_STYLE: Style = style! {
@@ -125,7 +123,7 @@ pub fn format_results<'a>(
     };
     const DEFAULT_STYLE: Style = style!();
 
-    const PADDINGS: [Span; 16] = raws!(
+    const PADDINGS: [Cow<'static, str>; 16] = cows!(
         " ",
         "  ",
         "   ",
@@ -149,24 +147,25 @@ pub fn format_results<'a>(
         style: style! { fg: Color::Yellow, mod: Modifier::BOLD, },
     };
 
-    let packages = packages.read();
-    match shown.read().get_vec() {
+    match (*shown).load().get_vec() {
         Some(shown) => shown
             .iter()
             .skip(skip)
             .take(height - 5)
             .copied()
-            .map(|idx| packages[idx].to_string())
             .enumerate()
-            .map(|(i, line)| {
+            .map(|(i, package_idx)| {
                 let real_index = shown[skip + i];
                 let index = i + skip + 1;
 
                 let index_span = Span::styled(index.to_string(), INDEX_STYLE);
-                let padding_span = PADDINGS[pad_to - index.ilog10() as usize].clone();
+                let padding_span = Span {
+                    content: PADDINGS[pad_to - index.ilog10() as usize].clone(),
+                    style: DEFAULT_STYLE,
+                };
                 let line_span = Span::styled(
-                    line,
-                    match (installed.read().contains(&real_index), current == index - 1) {
+                    &packages[package_idx],
+                    match (installed.contains(&real_index), current == index - 1) {
                         (true, true) => INSTALLED_SELECTED_STYLE,
                         (true, false) => INSTALLED_STYLE,
                         (false, true) => UNINSTALLED_SELECTED_STYLE,
@@ -187,13 +186,15 @@ pub fn format_results<'a>(
             .enumerate()
             .skip(skip)
             .take(height - 5)
-            .map(|(i, s)| (i, s.to_string()))
             .map(|(i, line)| {
                 let index_span = Span::styled((i + 1).to_string(), INDEX_STYLE);
-                let padding_span = PADDINGS[pad_to - (i + 1).ilog10() as usize].clone();
+                let padding_span = Span {
+                    content: PADDINGS[pad_to - (i + 1).ilog10() as usize].clone(),
+                    style: DEFAULT_STYLE,
+                };
                 let line_span = Span::styled(
                     line,
-                    match (installed.read().contains(&i), current == i) {
+                    match (installed.contains(&i), current == i) {
                         (true, true) => INSTALLED_SELECTED_STYLE,
                         (true, false) => INSTALLED_STYLE,
                         (false, true) => UNINSTALLED_SELECTED_STYLE,
@@ -212,19 +213,19 @@ pub fn format_results<'a>(
     }
 }
 
-pub async fn get_info<'a>(
-    all_packages: Arc<RwLock<CompactStrings>>,
+pub async fn get_info<'line>(
+    all_packages: &CompactStrings,
     index: usize,
-    installed_cache: Arc<RwLock<IntSet<usize>>>,
+    installed_cache: &IntSet<usize>,
     command: &str,
-) -> Vec<Line<'a>> {
-    if index >= all_packages.read().len() {
+) -> Vec<Line<'line>> {
+    if index >= all_packages.len() {
         return Vec::new();
     }
 
     let mut cmd = Command::new(command);
 
-    if installed_cache.read().contains(&index) {
+    if installed_cache.contains(&index) {
         cmd.arg("-Qi");
     } else {
         // Debounce so that we don't spam requests
@@ -233,7 +234,7 @@ pub async fn get_info<'a>(
         cmd.arg("-Si");
     };
 
-    cmd.arg(&all_packages.read()[index]);
+    cmd.arg(&all_packages[index]);
 
     let output = cmd_output(cmd).await;
     let lines = output.lines().map(ToOwned::to_owned).collect::<Vec<_>>();
@@ -248,31 +249,30 @@ pub async fn get_info<'a>(
 
     let mut info = Vec::with_capacity(lines.len());
     for mut line in lines {
-        if !line.starts_with(' ') {
-            if let Some(idx) = line.find(':') {
-                let value = line.split_off(idx + 1);
-                info.push(Line::from(vec![
-                    Span::styled(line, KEY_STYLE),
-                    Span::raw(value),
-                ]));
-            }
-        } else {
+        if line.starts_with(' ') {
             info.push(Line::from(line));
+            continue;
+        }
+
+        if let Some(idx) = line.find(':') {
+            let value = line.split_off(idx + 1);
+            info.push(Line::from(vec![
+                Span::styled(line, KEY_STYLE),
+                Span::raw(value),
+            ]));
         }
     }
 
     info
 }
 
-pub async fn check_installed(
-    packages: Arc<RwLock<CompactStrings>>,
-    installed: Arc<RwLock<IntSet<usize>>>,
-) {
+pub async fn check_installed(packages: &CompactStrings) -> IntSet<usize> {
     const PATH: &str = "/var/lib/pacman/local";
     const DESC: &str = "desc";
 
+    let mut out = IntSet::default();
     let Ok(dir) = std::fs::read_dir(PATH) else {
-        return;
+        return out;
     };
 
     let mut set = HashSet::new();
@@ -297,22 +297,20 @@ pub async fn check_installed(
         set.insert(name);
     }
 
-    let mut installed = installed.write();
     for (pos, _) in packages
-        .read()
         .iter()
         .enumerate()
         .filter(|(_, p)| set.contains(*p))
     {
-        installed.insert(pos);
+        out.insert(pos);
     }
+    out
 }
 
 async fn cmd_output(mut cmd: Command) -> String {
-    if let Ok(output) = cmd.output().await {
-        if let Ok(output) = String::from_utf8(output.stdout) {
-            return output;
-        }
-    }
-    String::new()
+    cmd.output()
+        .await
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .unwrap_or_default()
 }

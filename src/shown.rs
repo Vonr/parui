@@ -16,15 +16,6 @@ impl Shown {
         }
     }
 
-    pub fn clear(&mut self) {
-        use Shown::*;
-
-        match self {
-            All => *self = Shown::Few(Vec::new()),
-            Few(v) => v.clear(),
-        }
-    }
-
     pub fn get_vec(&self) -> Option<&Vec<usize>> {
         use Shown::*;
 

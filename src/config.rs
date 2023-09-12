@@ -32,7 +32,7 @@ impl Config {
 
         let command = command.unwrap_or_else(|| String::from("paru"));
 
-        if let Err(err) = std::process::Command::new(&command).arg("-h").output() {
+        if let Err(err) = std::process::Command::new(&command).arg("--help").output() {
             match err.kind() {
                 std::io::ErrorKind::NotFound => {
                     eprintln!("parui: {command}: command not found");

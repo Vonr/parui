@@ -39,13 +39,10 @@ macro_rules! style {
 }
 
 #[macro_export]
-macro_rules! raws {
+macro_rules! cows {
     ($($str:literal),*) => {
         [
-            $(Span {
-                content: std::borrow::Cow::Borrowed($str),
-                style: DEFAULT_STYLE,
-            }),*
+            $(Cow::Borrowed($str)),*
         ]
     };
 }
