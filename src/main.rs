@@ -594,34 +594,34 @@ async fn main() -> Result<(), io::Error> {
                         return Ok(());
                     }
                     'R' => {
-                        if installed.get().unwrap().contains(&current) {
-                            let mut has_any = false;
-                            let mut cmd = std::process::Command::new(&command);
-                            cmd.arg("-R");
-                            if selected.is_empty() {
-                                cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
-                                has_any = true;
-                            } else {
-                                for i in selected.iter() {
-                                    if installed.get().unwrap().contains(i) {
-                                        cmd.arg(&(all_packages.get().unwrap()[*i]));
-                                        has_any = true;
-                                    }
+                        let mut has_any = false;
+                        let mut cmd = std::process::Command::new(&command);
+                        cmd.arg("-R");
+                        if selected.is_empty()
+                            && installed.get().unwrap().contains(&real_idx(current))
+                        {
+                            cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
+                            has_any = true;
+                        } else {
+                            for i in selected.iter() {
+                                if installed.get().unwrap().contains(i) {
+                                    cmd.arg(&(all_packages.get().unwrap()[*i]));
+                                    has_any = true;
                                 }
                             }
-
-                            if !has_any {
-                                continue;
-                            }
-
-                            disable_raw_mode()?;
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                            terminal.show_cursor()?;
-
-                            cmd.exec();
-
-                            return Ok(());
                         }
+
+                        if !has_any {
+                            continue;
+                        }
+
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                        terminal.show_cursor()?;
+
+                        cmd.exec();
+
+                        return Ok(());
                     }
 
                     _ => redraw.store(true, Ordering::SeqCst),
