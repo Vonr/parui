@@ -42,4 +42,22 @@ impl Shown {
             Few(v) => v.get(idx).copied(),
         }
     }
+
+    pub fn clear(&mut self) {
+        use Shown::*;
+
+        match self {
+            All => *self = Shown::Few(Vec::new()),
+            Few(v) => v.clear(),
+        }
+    }
+
+    pub fn extend(&mut self, iter: impl Iterator<Item = usize>) {
+        use Shown::*;
+
+        match self {
+            All => (),
+            Few(v) => v.extend(iter),
+        }
+    }
 }

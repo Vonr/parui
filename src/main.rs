@@ -4,9 +4,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use std::{env, io};
 
-use arc_swap::ArcSwap;
 use atomic::Atomic;
-use compact_strings::CompactStrings;
+use compact_strings::FixedCompactStrings;
 use config::Config;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
@@ -17,7 +16,7 @@ use interface::{check_installed, format_results, get_info, list, search};
 use message::Message;
 use mode::Mode;
 use nohash_hasher::IntSet;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use shown::Shown;
 use tui::style::{Color, Modifier, Style};
 use tui::widgets::{BorderType, Wrap};
@@ -56,7 +55,7 @@ async fn main() -> Result<(), io::Error> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut query = args.query.unwrap_or_default();
-    let shown = Arc::new(ArcSwap::new(Arc::new(Shown::Few(Vec::new()))));
+    let shown = Arc::new(RwLock::new(Shown::Few(Vec::new())));
     let mode = Arc::new(Atomic::new(Mode::Insert));
     let mut current: usize = 0;
     let mut selected = IntSet::default();
@@ -65,17 +64,17 @@ async fn main() -> Result<(), io::Error> {
     let redraw = Arc::new(AtomicBool::new(true));
     let mut insert_pos: u16;
 
-    let all_packages: Arc<OnceLock<&'static CompactStrings>> = Arc::new(OnceLock::new());
+    let all_packages: Arc<OnceLock<FixedCompactStrings>> = Arc::new(OnceLock::new());
     let installed: Arc<OnceLock<IntSet<usize>>> = Arc::new(OnceLock::new());
     let error_msg = Arc::new(Atomic::new(Message::TrySearch));
 
     let shown_len = || {
-        (*shown)
-            .load()
+        shown
+            .read()
             .len()
             .unwrap_or(all_packages.get().map(|p| p.len()).unwrap_or_default())
     };
-    let real_idx = |idx| (*shown).load().get(idx).unwrap_or(idx);
+    let real_idx = |idx| shown.read().get(idx).unwrap_or(idx);
 
     let mut _search_task = None;
 
@@ -109,9 +108,9 @@ async fn main() -> Result<(), io::Error> {
                 installed.get_or_init(|| result);
             }
 
-            shown.store(search(&query, all_packages.get().unwrap()).into());
+            search(&query, all_packages.get().unwrap(), shown.clone());
 
-            if !(*shown).load().is_empty() {
+            if !shown.read().is_empty() {
                 mode.store(Mode::Select, Ordering::SeqCst);
             } else {
                 error_msg.store(Message::NoResults, Ordering::SeqCst);
@@ -159,7 +158,7 @@ async fn main() -> Result<(), io::Error> {
                 })
                 .unwrap_or_default();
 
-            if info.lock().is_empty() && !(*shown).load().is_empty() {
+            if info.lock().is_empty() && !shown.read().is_empty() {
                 let shown = shown.clone();
                 let command = command.clone();
                 let redraw = redraw.clone();
@@ -170,7 +169,7 @@ async fn main() -> Result<(), io::Error> {
                     search_thread.abort();
                 }
                 _search_task = Some(tokio::spawn(async move {
-                    let real_idx = (*shown).load().get(current).unwrap_or(current);
+                    let real_idx = shown.read().get(current).unwrap_or(current);
                     let newinfo = get_info(
                         all_packages.get().unwrap(),
                         real_idx,
@@ -248,7 +247,7 @@ async fn main() -> Result<(), io::Error> {
                 };
                 s.render_widget(para, area);
 
-                if (*shown).load().is_empty() {
+                if shown.read().is_empty() {
                     let area = Rect {
                         x: size.width / 4 + 1,
                         y: size.height / 2 - 2,
@@ -372,7 +371,7 @@ async fn main() -> Result<(), io::Error> {
         match mode.load(Ordering::SeqCst) {
             Mode::Insert => match k.code {
                 KeyCode::Esc => {
-                    if !(*shown).load().is_empty() {
+                    if !shown.read().is_empty() {
                         current = 0;
                         redraw.store(true, Ordering::SeqCst);
                         mode.store(Mode::Select, Ordering::SeqCst);
@@ -442,7 +441,7 @@ async fn main() -> Result<(), io::Error> {
                     info.lock().clear();
                     current = 0;
                     redraw.store(true, Ordering::SeqCst);
-                    shown.store(Shown::Few(Vec::new()).into());
+                    *shown.write() = Shown::Few(Vec::new());
                     let mode = mode.clone();
                     let shown = shown.clone();
                     let error_msg = error_msg.clone();
@@ -467,9 +466,9 @@ async fn main() -> Result<(), io::Error> {
                             installed.get_or_init(|| result);
                         }
 
-                        shown.store(search(&query, all_packages.get().unwrap()).into());
+                        search(&query, all_packages.get().unwrap(), shown.clone());
 
-                        if !(*shown).load().is_empty() {
+                        if !shown.read().is_empty() {
                             mode.store(Mode::Select, Ordering::SeqCst);
                         } else {
                             error_msg.store(Message::NoResults, Ordering::SeqCst);

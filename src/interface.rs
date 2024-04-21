@@ -6,9 +6,9 @@ use std::{
     time::Duration,
 };
 
-use arc_swap::ArcSwap;
-use compact_strings::CompactStrings;
+use compact_strings::FixedCompactStrings;
 use nohash_hasher::IntSet;
+use parking_lot::RwLock;
 use tokio::{join, process::Command, time::sleep};
 use tui::{
     style::{Color, Modifier, Style},
@@ -17,7 +17,7 @@ use tui::{
 
 use crate::shown::Shown;
 
-pub async fn list(show_aur: bool) -> &'static mut CompactStrings {
+pub async fn list(show_aur: bool) -> FixedCompactStrings {
     let mut cmd = Command::new("pacman");
     cmd.arg("-Slq");
 
@@ -34,7 +34,7 @@ pub async fn list(show_aur: bool) -> &'static mut CompactStrings {
 
     let (pacman_out, aur_out) = join!(pacman_out, aur_out);
 
-    let out = Box::leak(Box::new(CompactStrings::with_capacity(16 * 16384, 16384)));
+    let mut out = FixedCompactStrings::with_capacity(16 * 16384, 16384);
 
     let Ok(pacman_out) = pacman_out else {
         return out;
@@ -74,25 +74,40 @@ pub async fn list(show_aur: bool) -> &'static mut CompactStrings {
     out
 }
 
-pub fn search(query: &str, packages: &CompactStrings) -> Shown {
+pub fn search(query: &str, packages: &FixedCompactStrings, shown: Arc<RwLock<Shown>>) {
     if query.is_empty() {
-        Shown::All
+        *shown.write() = Shown::All
     } else {
-        Shown::Few(
-            packages
-                .iter()
-                .enumerate()
-                .filter(|(_, package)| package.contains(query))
-                .map(|(i, _)| i)
-                .collect(),
-        )
+        match *shown.read() {
+            Shown::Few(_) => {
+                let mut handle = shown.write();
+                handle.clear();
+                handle.extend(
+                    packages
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, package)| package.contains(query))
+                        .map(|(i, _)| i),
+                )
+            }
+            _ => {
+                *shown.write() = Shown::Few(
+                    packages
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, package)| package.contains(query))
+                        .map(|(i, _)| i)
+                        .collect(),
+                )
+            }
+        }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn format_results<'line>(
-    packages: &'static CompactStrings,
-    shown: Arc<ArcSwap<Shown>>,
+    packages: &'line FixedCompactStrings,
+    shown: Arc<RwLock<Shown>>,
     current: usize,
     selected: &IntSet<usize>,
     height: usize,
@@ -147,7 +162,7 @@ pub fn format_results<'line>(
         style: style! { fg: Color::Yellow, mod: Modifier::BOLD, },
     };
 
-    match (*shown).load().get_vec() {
+    match shown.read().get_vec() {
         Some(shown) => shown
             .iter()
             .skip(skip)
@@ -214,7 +229,7 @@ pub fn format_results<'line>(
 }
 
 pub async fn get_info<'line>(
-    all_packages: &CompactStrings,
+    all_packages: &FixedCompactStrings,
     index: usize,
     installed_cache: &IntSet<usize>,
     command: &str,
@@ -266,7 +281,7 @@ pub async fn get_info<'line>(
     info
 }
 
-pub async fn check_installed(packages: &CompactStrings) -> IntSet<usize> {
+pub async fn check_installed(packages: &FixedCompactStrings) -> IntSet<usize> {
     const PATH: &str = "/var/lib/pacman/local";
     const DESC: &str = "desc";
 
