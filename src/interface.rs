@@ -139,6 +139,7 @@ pub fn format_results<'line>(
     const DEFAULT_STYLE: Style = style!();
 
     const PADDINGS: [Cow<'static, str>; 16] = cows!(
+        "",
         " ",
         "  ",
         "   ",
@@ -153,8 +154,7 @@ pub fn format_results<'line>(
         "            ",
         "             ",
         "              ",
-        "               ",
-        "                "
+        "               "
     );
 
     const SELECTED: Span = Span {

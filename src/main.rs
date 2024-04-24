@@ -1,3 +1,4 @@
+use std::io::{BufWriter, Write};
 use std::os::unix::prelude::CommandExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -18,15 +19,16 @@ use mode::Mode;
 use nohash_hasher::IntSet;
 use parking_lot::{Mutex, RwLock};
 use shown::Shown;
-use tui::style::{Color, Modifier, Style};
+use tui::style::{Color, Modifier, Style, Stylize};
 use tui::widgets::{BorderType, Wrap};
 use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Rect},
-    text::{Line, Span},
+    text::Line,
     widgets::{Block, Borders, Clear, Paragraph},
     Terminal,
 };
+use widgets::{Title, TitleState};
 
 mod config;
 mod interface;
@@ -34,6 +36,7 @@ mod macros;
 mod message;
 mod mode;
 mod shown;
+mod widgets;
 
 #[cfg(feature = "dhat")]
 #[global_allocator]
@@ -121,6 +124,8 @@ async fn main() -> Result<(), io::Error> {
 
     terminal.clear()?;
 
+    let mut title_state = TitleState::new();
+
     loop {
         let mut line = current;
         let size = terminal.size();
@@ -170,82 +175,74 @@ async fn main() -> Result<(), io::Error> {
                 }
                 _search_task = Some(tokio::spawn(async move {
                     let real_idx = shown.read().get(current).unwrap_or(current);
-                    let newinfo = get_info(
+                    let new_info = get_info(
                         all_packages.get().unwrap(),
                         real_idx,
                         installed.get().unwrap(),
                         &command,
                     )
                     .await;
-                    *info.lock() = newinfo;
+                    *info.lock() = new_info;
                     redraw.store(true, Ordering::SeqCst);
                 }))
             }
 
-            terminal.draw(|s| {
+            terminal.draw(|f| {
                 let search_color;
                 let shown_color;
-                let bold_search_style;
-                if matches!(mode.load(Ordering::SeqCst), Mode::Insert) {
-                    search_color = Color::White;
-                    shown_color = Color::Gray;
-                    bold_search_style = Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .fg(search_color)
-                } else {
-                    search_color = Color::Gray;
-                    shown_color = Color::White;
-                    bold_search_style = Style::default().fg(search_color);
+                let search_mod;
+                match mode.load(Ordering::SeqCst) {
+                    Mode::Insert => {
+                        search_color = Color::White;
+                        shown_color = Color::Gray;
+                        search_mod = Modifier::BOLD;
+                    }
+                    Mode::Select => {
+                        search_color = Color::Gray;
+                        shown_color = Color::White;
+                        search_mod = Modifier::default();
+                    }
                 };
 
-                let para = Paragraph::new(Line::from(vec![
-                    Span::styled(" Search: ", bold_search_style),
-                    Span::styled(
-                        query
-                            .chars()
-                            .skip((query.len() + 13).saturating_sub(size.width as usize))
-                            .take(size.width.saturating_sub(13) as usize)
-                            .collect::<String>(),
-                        Style::default().fg(search_color),
-                    ),
-                ]))
-                .block(
+                title_state.query = query.clone();
+                title_state.col = search_color;
+                title_state.mod_ = search_mod;
+                title_state.size = size;
+                f.render_stateful_widget(
+                    Title::new(),
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        width: size.width,
+                        height: 3,
+                    },
+                    &mut title_state,
+                );
+
+                f.render_widget(
                     Block::default()
-                        .title(Span::styled(" parui ", bold_search_style))
-                        .title_alignment(Alignment::Center)
-                        .border_style(Style::default().fg(search_color))
                         .borders(Borders::ALL)
+                        .border_style(Style::default().fg(shown_color))
                         .border_type(BorderType::Rounded),
-                )
-                .alignment(Alignment::Left);
-                let mut area = Rect {
-                    x: 0,
-                    y: 0,
-                    width: size.width,
-                    height: 3,
-                };
-                s.render_widget(para, area);
+                    Rect {
+                        x: 0,
+                        y: 3,
+                        width: size.width,
+                        height: size.height - 3,
+                    },
+                );
 
-                let para = Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(shown_color))
-                    .border_type(BorderType::Rounded);
-                area = Rect {
-                    x: 0,
-                    y: 3,
-                    width: size.width,
-                    height: size.height - 3,
-                };
-                s.render_widget(para, area);
-
-                let para = Paragraph::new(formatted_shown).alignment(Alignment::Left);
-                area = Rect {
-                    x: 2,
-                    y: 4,
-                    width: size.width - 2,
-                    height: size.height - 4,
-                };
-                s.render_widget(para, area);
+                // this is technically stateful, but it is hard to incrementally update so we will
+                // reconstruct it instead.
+                f.render_widget(
+                    Paragraph::new(formatted_shown).alignment(Alignment::Left),
+                    Rect {
+                        x: 2,
+                        y: 4,
+                        width: size.width - 2,
+                        height: size.height - 4,
+                    },
+                );
 
                 if shown.read().is_empty() {
                     let area = Rect {
@@ -257,20 +254,17 @@ async fn main() -> Result<(), io::Error> {
                     let no_shown = Paragraph::new(error_msg.load(Ordering::SeqCst).as_str())
                         .block(
                             Block::default()
-                                .title(Span::styled(
-                                    " No Results ",
-                                    Style::default().add_modifier(Modifier::BOLD),
-                                ))
+                                .title(" No Results ".bold())
                                 .title_alignment(Alignment::Center)
                                 .borders(Borders::ALL)
                                 .border_type(BorderType::Rounded),
                         )
                         .wrap(Wrap { trim: true })
                         .alignment(Alignment::Center);
-                    s.render_widget(Clear, area);
-                    s.render_widget(no_shown, area);
+                    f.render_widget(Clear, area);
+                    f.render_widget(no_shown, area);
                 } else {
-                    area = Rect {
+                    let area = Rect {
                         x: size.width / 2,
                         y: 4,
                         width: size.width / 2 - 1,
@@ -280,66 +274,64 @@ async fn main() -> Result<(), io::Error> {
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(shown_color))
                         .border_type(BorderType::Rounded);
-                    s.render_widget(Clear, area);
-                    s.render_widget(border, area);
+                    f.render_widget(Clear, area);
+                    f.render_widget(border, area);
 
                     let (info, no_info) = {
                         let info_lock = info.lock();
                         (info_lock.clone(), info_lock.is_empty())
                     };
 
-                    area = Rect {
-                        x: size.width / 2 + 2,
-                        y: 5,
-                        width: size.width / 2 - 5,
-                        height: 2 + no_info as u16 * 2,
-                    };
+                    // TODO: Use render_widget_ref when it is ready.
                     let actions = Paragraph::new(if no_info {
                         vec![
-                            Line::from(Span::styled(
-                                "Press ENTER to (re)install selected packages",
-                                Style::default()
-                                    .fg(Color::Green)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
-                            Line::from(Span::styled(
-                                "Press Shift-R to uninstall selected packages",
-                                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                            )),
+                            "Press ENTER to (re)install selected packages"
+                                .green()
+                                .bold()
+                                .into(),
+                            "Press Shift-R to uninstall selected packages"
+                                .red()
+                                .bold()
+                                .into(),
                             Line::default(),
-                            Line::from(Span::styled(
-                                "Finding info...",
-                                Style::default().fg(Color::Gray),
-                            )),
+                            "Finding info...".gray().into(),
                         ]
                     } else {
                         vec![
-                            Line::from(Span::styled(
-                                "Press ENTER to (re)install selected packages",
-                                Style::default()
-                                    .fg(Color::Green)
-                                    .add_modifier(Modifier::BOLD),
-                            )),
-                            Line::from(Span::styled(
-                                "Press Shift-R to uninstall selected packages",
-                                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                            )),
+                            "Press ENTER to (re)install selected packages"
+                                .green()
+                                .bold()
+                                .into(),
+                            "Press Shift-R to uninstall selected packages"
+                                .red()
+                                .bold()
+                                .into(),
                         ]
                     })
                     .alignment(Alignment::Left);
-                    s.render_widget(actions, area);
+                    f.render_widget(
+                        actions,
+                        Rect {
+                            x: size.width / 2 + 2,
+                            y: 5,
+                            width: size.width / 2 - 5,
+                            height: 2 + no_info as u16 * 2,
+                        },
+                    );
 
-                    area = Rect {
-                        x: size.width / 2 + 2,
-                        y: 8 - no_info as u16,
-                        width: size.width / 2 - 5,
-                        height: size.height - 10 - no_info as u16,
-                    };
-
+                    // TODO: Use render_widget_ref when it is ready.
                     let info = Paragraph::new(info)
                         .wrap(Wrap { trim: false })
                         .scroll((info_scroll, 0));
-                    s.render_widget(info, area);
+                    f.render_widget(
+                        info,
+                        Rect {
+                            x: size.width / 2 + 2,
+                            y: 8 - no_info as u16,
+                            width: size.width / 2 - 5,
+                            height: size.height - 10 - no_info as u16,
+                        },
+                    );
                 }
             })?;
 
@@ -596,15 +588,26 @@ async fn main() -> Result<(), io::Error> {
                         let mut has_any = false;
                         let mut cmd = std::process::Command::new(&command);
                         cmd.arg("-R");
+                        let stdout = io::stdout().lock();
+                        let mut writer = BufWriter::new(stdout);
+                        let _ = writer.write_all(b"Removing ");
+
                         if selected.is_empty()
                             && installed.get().unwrap().contains(&real_idx(current))
                         {
-                            cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
+                            let package = &all_packages.get().unwrap()[real_idx(current)];
+                            let _ = writer.write_all(package.as_bytes());
+                            cmd.arg(package);
                             has_any = true;
                         } else {
-                            for i in selected.iter() {
+                            for (idx, i) in selected.iter().enumerate() {
                                 if installed.get().unwrap().contains(i) {
-                                    cmd.arg(&(all_packages.get().unwrap()[*i]));
+                                    let package = &all_packages.get().unwrap()[*i];
+                                    let _ = writer.write_all(package.as_bytes());
+                                    if idx != selected.len() - 1 {
+                                        let _ = writer.write_all(b", ");
+                                    }
+                                    cmd.arg(package);
                                     has_any = true;
                                 }
                             }
@@ -617,6 +620,10 @@ async fn main() -> Result<(), io::Error> {
                         disable_raw_mode()?;
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                         terminal.show_cursor()?;
+                        drop(terminal);
+
+                        let _ = writer.write_all(b".\n");
+                        let _ = writer.flush();
 
                         cmd.exec();
 
@@ -629,6 +636,7 @@ async fn main() -> Result<(), io::Error> {
                     disable_raw_mode()?;
                     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                     terminal.show_cursor()?;
+                    drop(terminal);
 
                     if let Some(search_thread) = _search_task {
                         search_thread.abort();
@@ -636,13 +644,29 @@ async fn main() -> Result<(), io::Error> {
 
                     let mut cmd = std::process::Command::new(command);
                     cmd.arg("-S");
+
+                    let stdout = io::stdout().lock();
+                    let mut writer = BufWriter::new(stdout);
+                    let _ = writer.write_all(b"Installing ");
+
                     if selected.is_empty() {
-                        cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
+                        let package = &all_packages.get().unwrap()[real_idx(current)];
+                        let _ = writer.write_all(package.as_bytes());
+                        cmd.arg(package);
                     } else {
-                        for i in selected.iter() {
-                            cmd.arg(&(all_packages.get().unwrap()[*i]));
+                        for (idx, i) in selected.iter().enumerate() {
+                            let package = &all_packages.get().unwrap()[*i];
+                            let _ = writer.write_all(package.as_bytes());
+                            if idx != selected.len() - 1 {
+                                let _ = writer.write_all(b", ");
+                            }
+
+                            cmd.arg(package);
                         }
                     }
+
+                    let _ = writer.write_all(b".\n");
+                    let _ = writer.flush();
 
                     cmd.exec();
 
@@ -655,14 +679,15 @@ async fn main() -> Result<(), io::Error> {
 }
 
 #[inline(always)]
-const fn is_word_boundary(byte: &u8) -> bool {
-    matches!(*byte, b' ' | b'-' | b'_')
+const fn is_word_boundary(byte: u8) -> bool {
+    matches!(byte, b' ' | b'-' | b'_')
 }
 
 fn last_word_end(bytes: &[u8], pos: u16) -> usize {
     bytes
         .iter()
         .take(pos.saturating_sub(1) as usize)
+        .copied()
         .rposition(is_word_boundary)
         .map(|i| i + 1)
         .unwrap_or_default()
@@ -673,6 +698,7 @@ fn next_word_start(bytes: &[u8], pos: u16) -> usize {
     bytes
         .iter()
         .skip(pos)
+        .copied()
         .position(is_word_boundary)
         .map(|i| i + pos + 1)
         .unwrap_or(bytes.len())
