@@ -78,9 +78,9 @@ pub fn search(query: &str, packages: &FixedCompactStrings, shown: Arc<RwLock<Sho
     if query.is_empty() {
         *shown.write() = Shown::All
     } else {
-        match *shown.read() {
+        let mut handle = shown.write();
+        match *handle {
             Shown::Few(_) => {
-                let mut handle = shown.write();
                 handle.clear();
                 handle.extend(
                     packages
@@ -91,7 +91,7 @@ pub fn search(query: &str, packages: &FixedCompactStrings, shown: Arc<RwLock<Sho
                 )
             }
             _ => {
-                *shown.write() = Shown::Few(
+                *handle = Shown::Few(
                     packages
                         .iter()
                         .enumerate()
