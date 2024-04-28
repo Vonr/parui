@@ -46,3 +46,27 @@ macro_rules! cows {
         ]
     };
 }
+
+#[macro_export]
+macro_rules! stream_enter {
+    ($stream:expr) => {{
+        ::crossterm::execute!(
+            $stream,
+            ::crossterm::terminal::EnterAlternateScreen,
+            ::crossterm::event::EnableMouseCapture,
+            ::crossterm::event::EnableBracketedPaste
+        )
+    }};
+}
+
+#[macro_export]
+macro_rules! stream_exit {
+    ($stream:expr) => {{
+        ::crossterm::execute!(
+            $stream,
+            ::crossterm::terminal::LeaveAlternateScreen,
+            ::crossterm::event::DisableMouseCapture,
+            ::crossterm::event::DisableBracketedPaste
+        )
+    }};
+}

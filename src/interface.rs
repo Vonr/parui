@@ -1,7 +1,10 @@
 use std::{
     borrow::Cow,
     collections::HashSet,
-    io::{BufRead, BufReader},
+    ffi::OsStr,
+    fs::{File, FileType},
+    hash::{BuildHasherDefault, DefaultHasher},
+    io::{BufRead, BufReader, Seek},
     sync::Arc,
     time::Duration,
 };
@@ -9,13 +12,14 @@ use std::{
 use compact_strings::FixedCompactStrings;
 use nohash_hasher::IntSet;
 use parking_lot::RwLock;
+use regex::Regex;
 use tokio::{join, process::Command, time::sleep};
 use tui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 
-use crate::shown::Shown;
+use crate::{matcher::Matcher, shown::Shown};
 
 pub async fn list(show_aur: bool) -> FixedCompactStrings {
     let mut cmd = Command::new("pacman");
@@ -44,28 +48,28 @@ pub async fn list(show_aur: bool) -> FixedCompactStrings {
         return out;
     };
 
-    out.clear();
+    out.extend(
+        pacman_out
+            .stdout
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                // SAFETY: Package names can contain only alphanumeric characters and any of @, ., _, +, -.
+                unsafe { std::str::from_utf8_unchecked(line) }
+            }),
+    );
 
-    let mut buf = Vec::with_capacity(128);
-    let mut push_byte = |byte| {
-        if byte != b'\n' {
-            buf.push(byte);
-            return;
-        }
-
-        if let Ok(s) = std::str::from_utf8(&buf) {
-            out.push(s);
-        }
-
-        buf.clear();
-    };
-
-    pacman_out.stdout.into_iter().for_each(&mut push_byte);
     if let Some(aur_out) = aur_out {
         let mut buf = Vec::with_capacity(16 * 16384);
-
         aur_out.into_reader().read_to_end(&mut buf).unwrap();
-        buf.into_iter().for_each(&mut push_byte)
+        out.extend(
+            buf.split(|&b| b == b'\n')
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    // SAFETY: Package names can contain only alphanumeric characters and any of @, ., _, +, -.
+                    unsafe { std::str::from_utf8_unchecked(line) }
+                }),
+        );
     }
 
     out.shrink_to_fit();
@@ -75,31 +79,44 @@ pub async fn list(show_aur: bool) -> FixedCompactStrings {
 }
 
 pub fn search(query: &str, packages: &FixedCompactStrings, shown: Arc<RwLock<Shown>>) {
-    if query.is_empty() {
+    let query = query.trim();
+    if query.is_empty() || query == ".*" || query == "." {
         *shown.write() = Shown::All
     } else {
-        let mut handle = shown.write();
-        match *handle {
-            Shown::Few(_) => {
-                handle.clear();
-                handle.extend(
-                    packages
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, package)| package.contains(query))
-                        .map(|(i, _)| i),
-                )
+        fn inner<'a>(
+            matcher: &(impl Matcher<&'a str> + ?Sized),
+            packages: &'a FixedCompactStrings,
+            shown: Arc<RwLock<Shown>>,
+        ) {
+            let mut handle = shown.write();
+            match *handle {
+                Shown::Few(_) => {
+                    handle.clear();
+                    handle.extend(
+                        packages
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, package)| matcher.matches(*package))
+                            .map(|(i, _)| i),
+                    )
+                }
+                _ => {
+                    *handle = Shown::Few(
+                        packages
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, package)| matcher.matches(*package))
+                            .map(|(i, _)| i)
+                            .collect(),
+                    )
+                }
             }
-            _ => {
-                *handle = Shown::Few(
-                    packages
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, package)| package.contains(query))
-                        .map(|(i, _)| i)
-                        .collect(),
-                )
-            }
+        }
+
+        if let Ok(re) = Regex::new(query) {
+            inner(&re, packages, shown);
+        } else {
+            inner(query, packages, shown);
         }
     }
 }
@@ -281,35 +298,54 @@ pub async fn get_info<'line>(
     info
 }
 
-pub async fn check_installed(packages: &FixedCompactStrings) -> IntSet<usize> {
-    const PATH: &str = "/var/lib/pacman/local";
-    const DESC: &str = "desc";
+pub fn check_installed(packages: &FixedCompactStrings) -> IntSet<usize> {
+    const DIR: &str = "/var/lib/pacman/local/";
 
-    let mut out = IntSet::default();
-    let Ok(dir) = std::fs::read_dir(PATH) else {
-        return out;
+    let Ok(dir) = std::fs::read_dir(DIR) else {
+        return IntSet::default();
     };
 
-    let mut set = HashSet::new();
+    let mut out = IntSet::with_capacity_and_hasher(512, Default::default());
+    let mut set =
+        HashSet::with_capacity_and_hasher(512, BuildHasherDefault::<DefaultHasher>::default());
+
+    let mut path = Vec::with_capacity(256);
+    let dir_os = OsStr::new(DIR);
+    let dir_os_bytes = dir_os.as_encoded_bytes();
+    let dir_len = dir_os_bytes.len();
+    path.extend_from_slice(dir_os_bytes);
+
+    let mut reader: Option<BufReader<File>> = None;
     for entry in dir.filter_map(Result::ok) {
-        let Ok(ft) = entry.file_type() else {
+        let Ok(true) = entry.file_type().as_ref().map(FileType::is_dir) else {
             continue;
         };
 
-        if !ft.is_dir() {
+        path.extend_from_slice(entry.file_name().as_encoded_bytes());
+        path.extend_from_slice(OsStr::new("/desc").as_encoded_bytes());
+
+        // SAFETY: `path` only contains content that originated from `OsStr::as_encoded_bytes`
+        let Ok(file) = File::open(unsafe { OsStr::from_encoded_bytes_unchecked(&path) }) else {
             continue;
+        };
+
+        unsafe {
+            path.set_len(dir_len);
         }
 
-        let path = entry.path().join(DESC);
-        let Ok(file) = std::fs::File::open(path) else {
-            continue;
-        };
+        match reader {
+            Some(ref mut reader) => {
+                reader.rewind().unwrap();
+                *reader.get_mut() = file;
+            }
+            None => {
+                reader = Some(BufReader::new(file));
+            }
+        }
 
-        let Some(Ok(name)) = BufReader::new(file).lines().nth(1) else {
-            continue;
+        if let Some(Ok(name)) = reader.as_mut().unwrap().lines().nth(1) {
+            set.insert(name);
         };
-
-        set.insert(name);
     }
 
     for (pos, _) in packages

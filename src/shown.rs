@@ -7,15 +7,6 @@ pub enum Shown {
 }
 
 impl Shown {
-    pub fn is_empty(&self) -> bool {
-        use Shown::*;
-
-        match self {
-            All => false,
-            Few(v) => v.is_empty(),
-        }
-    }
-
     pub fn get_vec(&self) -> Option<&Vec<usize>> {
         use Shown::*;
 
