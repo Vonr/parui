@@ -25,7 +25,7 @@ use parking_lot::{Mutex, RwLock};
 use shown::Shown;
 use tui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Rect},
+    layout::{Alignment, Rect, Size},
     style::{Color, Modifier, Style, Stylize},
     text::Line,
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
@@ -192,7 +192,7 @@ async fn main() -> Result<(), io::Error> {
                 title_state.query = query.clone();
                 title_state.col = search_color;
                 title_state.mod_ = search_mod;
-                title_state.size = size;
+                title_state.size = size.into();
                 f.render_stateful_widget(
                     widgets::Title::new(),
                     Rect {
@@ -346,11 +346,14 @@ async fn main() -> Result<(), io::Error> {
 
             match mode.load(Ordering::SeqCst) {
                 Mode::Insert => {
-                    terminal.set_cursor((insert_pos + 10).min(size.width.saturating_sub(3)), 1)?;
+                    terminal.set_cursor_position((
+                        (insert_pos + 10).min(size.width.saturating_sub(3)),
+                        1,
+                    ))?;
                     terminal.show_cursor()?;
                 }
                 Mode::Select => {
-                    terminal.set_cursor(2, line as u16 + 4)?;
+                    terminal.set_cursor_position((2, line as u16 + 4))?;
                     terminal.hide_cursor()?;
                 }
             }
@@ -510,7 +513,7 @@ async fn main() -> Result<(), io::Error> {
 
                             return Ok(());
                         }
-                        'w' if k.modifiers == KeyModifiers::CONTROL => {
+                        'w' | 'h' if k.modifiers == KeyModifiers::CONTROL => {
                             let boundary = last_word_end(query.as_bytes(), insert_pos);
                             query = query[..boundary].to_string() + &query[insert_pos as usize..];
                             insert_pos = boundary as u16;
@@ -585,7 +588,7 @@ async fn main() -> Result<(), io::Error> {
                         if result_count > per_page {
                             if current >= per_page {
                                 current -= per_page;
-                            } else if current % per_page == 0 {
+                            } else if current.is_multiple_of(per_page) {
                                 current = result_count / per_page * per_page;
                             } else {
                                 current = current / per_page * per_page;
@@ -687,7 +690,7 @@ async fn main() -> Result<(), io::Error> {
                             let _ = writer.write_all(b".\n");
                             let _ = writer.flush();
 
-                            cmd.exec();
+                            let _ = cmd.exec();
 
                             return Ok(());
                         }
@@ -730,7 +733,7 @@ async fn main() -> Result<(), io::Error> {
                         let _ = writer.write_all(b".\n");
                         let _ = writer.flush();
 
-                        cmd.exec();
+                        let _ = cmd.exec();
 
                         return Ok(());
                     }
@@ -768,14 +771,14 @@ fn next_word_start(bytes: &[u8], pos: u16) -> usize {
         .unwrap_or(bytes.len())
 }
 
-fn within_list(size: Rect, row: u16, col: u16) -> bool {
+fn within_list(size: Size, row: u16, col: u16) -> bool {
     col >= 1
         && col < (size.width / 2).saturating_sub(1)
         && row >= 4
         && row < size.height.saturating_sub(1)
 }
 
-fn within_info(size: Rect, row: u16, col: u16) -> bool {
+fn within_info(size: Size, row: u16, col: u16) -> bool {
     col > size.width / 2
         && col < size.width.saturating_sub(3)
         && row >= 5

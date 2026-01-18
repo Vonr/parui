@@ -10,6 +10,7 @@ use std::{
 };
 
 use compact_strings::FixedCompactStrings;
+use flate2::bufread::GzDecoder;
 use nohash_hasher::IntSet;
 use parking_lot::RwLock;
 use regex::Regex;
@@ -53,23 +54,21 @@ pub async fn list(show_aur: bool) -> FixedCompactStrings {
             .stdout
             .split(|&b| b == b'\n')
             .filter(|line| !line.is_empty())
-            .map(|line| {
-                // SAFETY: Package names can contain only alphanumeric characters and any of @, ., _, +, -.
-                unsafe { std::str::from_utf8_unchecked(line) }
-            }),
+            .filter_map(|line| std::str::from_utf8(line).ok()),
     );
 
     if let Some(aur_out) = aur_out {
-        let mut buf = Vec::with_capacity(16 * 16384);
-        aur_out.into_reader().read_to_end(&mut buf).unwrap();
-        out.extend(
-            buf.split(|&b| b == b'\n')
-                .filter(|line| !line.is_empty())
-                .map(|line| {
-                    // SAFETY: Package names can contain only alphanumeric characters and any of @, ., _, +, -.
-                    unsafe { std::str::from_utf8_unchecked(line) }
-                }),
-        );
+        let reader = BufReader::new(aur_out.into_body().into_reader());
+        let decoder = GzDecoder::new(reader);
+
+        if let Ok(s) = std::io::read_to_string(decoder) {
+            out.extend(
+                s.as_bytes()
+                    .split(|&b| b == b'\n')
+                    .filter(|line| !line.is_empty())
+                    .filter_map(|line| std::str::from_utf8(line).ok()),
+            );
+        }
     }
 
     out.shrink_to_fit();
