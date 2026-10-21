@@ -1,8 +1,8 @@
 [package]
 name = "parui"
 description = "Simple TUI frontend for paru or yay."
-version = "1.0.19"
-edition = "2021"
+version = "1.0.20"
+edition = "2024"
 license = "MIT"
 readme = "README.md"
 homepage = "https://github.com/Vonr/parui"
