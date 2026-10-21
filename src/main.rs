@@ -3,8 +3,8 @@ use std::{
     io::{self, BufWriter, Write},
     os::unix::prelude::CommandExt,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -17,24 +17,22 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use interface::{check_installed, format_results, get_info, list, search};
-use libc::malloc_trim;
 use message::Message;
 use mode::Mode;
 use nohash_hasher::IntSet;
 use parking_lot::{Mutex, RwLock};
 use shown::Shown;
 use tui::{
+    Terminal,
     backend::CrosstermBackend,
     layout::{Alignment, Rect, Size},
     style::{Color, Modifier, Style, Stylize},
     text::Line,
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
-    Terminal,
 };
 
 mod config;
 mod interface;
-mod libc;
 mod macros;
 mod matcher;
 mod message;
@@ -236,10 +234,6 @@ async fn main() -> Result<(), io::Error> {
                         .alignment(Alignment::Center);
                     f.render_widget(Clear, area);
                     f.render_widget(no_shown, area);
-
-                    unsafe {
-                        malloc_trim(0);
-                    }
                     return;
                 }
 
@@ -338,10 +332,6 @@ async fn main() -> Result<(), io::Error> {
                         height: size.height - 10 - no_info as u16,
                     },
                 );
-
-                unsafe {
-                    malloc_trim(0);
-                }
             })?;
 
             match mode.load(Ordering::SeqCst) {
