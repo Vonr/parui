@@ -328,9 +328,7 @@ pub fn check_installed(packages: &FixedCompactStrings) -> IntSet<usize> {
             continue;
         };
 
-        unsafe {
-            path.set_len(dir_len);
-        }
+        path.truncate(dir_len);
 
         match reader {
             Some(ref mut reader) => {
